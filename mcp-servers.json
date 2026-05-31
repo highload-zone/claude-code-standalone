@@ -1,0 +1,25 @@
+{
+  "codegraph": {
+    "type": "stdio",
+    "command": "caveman-shrink",
+    "args": ["codegraph", "serve", "--mcp"]
+  },
+  "sequential-thinking": {
+    "command": "mcp-server-sequential-thinking",
+    "args": []
+  },
+  "context7": {
+    "type": "http",
+    "url": "https://mcp.context7.com/mcp",
+    "headers": {
+      "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+    }
+  },
+  "perplexity": {
+    "command": "perplexity-mcp",
+    "args": [],
+    "env": {
+      "PERPLEXITY_API_KEY": "${PERPLEXITY_API_KEY}"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+# === Secrets (CRITICAL — never commit) ===
+.env
+*.env
+!.env.example
+
+# === Agent / local tool directories (host-local, not part of the product) ===
+.claude/
+.codex/
+.gemini/
+.tmp/
+openspec/
+
+# === IDE ===
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# === Output / runtime ===
+reports/
+*.log
+
+# === Node ===
+node_modules/
+tools/node_modules/
+npm-debug.log*
+pnpm-debug.log*
+
+# === OS ===
+.DS_Store
+Thumbs.db

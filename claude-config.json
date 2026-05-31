@@ -1,0 +1,92 @@
+{
+  "numStartups": 1,
+  "installMethod": "global",
+  "autoUpdates": false,
+  "theme": "dark",
+  "autoConnectIde": false,
+  "claudeInChromeDefaultEnabled": false,
+  "showExpandedTodos": true,
+  "dangerouslySkipPermissions": true,
+  "autoAcceptPermissions": true,
+  "autoTrustNewProjects": true,
+  "suppressTrustPrompts": true,
+  "suppressPermissionPrompts": true,
+  "defaultPermissionMode": "accept",
+  "customApiKeyResponses": {
+    "approved": [],
+    "rejected": []
+  },
+  "alwaysThinkingEnabled": true,
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true
+  },
+  "firstStartTime": "2025-08-18T19:55:22.726Z",
+  "userID": "docker-user",
+  "projects": {
+    "/workspace": {
+      "allowedTools": ["*"],
+      "permissions": {
+        "allow": [
+          "Bash(*)",
+          "Edit(*)",
+          "Read(*)", 
+          "Write(*)",
+          "List(*)",
+          "Glob(*)",
+          "Grep(*)",
+          "Task(*)",
+          "WebFetch(*)",
+          "WebSearch(*)",
+          "NotebookRead(*)",
+          "NotebookWrite(*)",
+          "mcp__*"
+        ],
+        "defaultMode": "acceptEdits",
+        "additionalDirectories": ["/workspace/input", "/workspace/output", "/workspace/data", "/workspace/temp"]
+      },
+      "hasCompletedProjectOnboarding": true,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false,
+      "autoAcceptAllTools": true,
+      "autoAcceptMcpTools": true,
+      "history": [],
+      "mcpContextUris": [],
+      "mcpServers": {
+      },
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "hasAllToolsApproved": true,
+      "autoAcceptEdits": true,
+      "skipConfirmationDialogs": true,
+      "projectOnboardingSeenCount": 1,
+      "thinkingMigrationComplete": true,
+      "allowWebSearch": true,
+      "allowWebFetch": true,
+      "allowFileOperations": true,
+      "allowBashExecution": true,
+      "lastTotalWebSearchRequests": 0,
+      "lastCost": 0,
+      "lastAPIDuration": 0,
+      "lastDuration": 0,
+      "lastLinesAdded": 0,
+      "lastLinesRemoved": 0,
+      "lastTotalInputTokens": 0,
+      "lastTotalOutputTokens": 0,
+      "lastTotalCacheCreationInputTokens": 0,
+      "lastTotalCacheReadInputTokens": 0,
+      "lastSessionId": "docker-session"
+    }
+  },
+  "oauthAccount": {
+    "accountUuid": "00000000-0000-0000-0000-000000000000",
+    "emailAddress": "user@example.com",
+    "organizationUuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "officialMarketplaceAutoInstallAttempted": true,
+  "officialMarketplaceAutoInstalled": true,
+  "isQualifiedForDataSharing": false,
+  "hasCompletedOnboarding": true,
+  "bypassPermissionsModeAccepted": true,
+  "lastOnboardingVersion": "1.0.83"
+}
