@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Build arguments
 ARG USER_ID=1001
@@ -32,8 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -f /usr/bin/nc /usr/bin/netcat /bin/netstat /usr/bin/ss || true
 
 # Install git-delta from GitHub releases (sha256-pinned for supply-chain integrity)
-RUN DELTA_VERSION="0.18.2" && \
-    DELTA_SHA256="1658c7b61825d411b50734f34016101309e4b6e7f5799944cf8e4ac542cebd7f" && \
+RUN DELTA_VERSION="0.19.2" && \
+    DELTA_SHA256="ea4f0222950ee750a3d38dd80d03bce4cee07a3f63928fc47548383bcaf23093" && \
     curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_amd64.deb" -o /tmp/git-delta.deb && \
     echo "${DELTA_SHA256}  /tmp/git-delta.deb" | sha256sum -c - && \
     dpkg -i /tmp/git-delta.deb && \
@@ -57,7 +57,7 @@ RUN curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/r
 # Toolchain: ALL global npm CLIs, locked + integrity-verified via `npm ci`
 # ============================================================================
 # Single source of truth for npm versions: tools/package.json + the committed
-# tools/package-lock.json (regenerate the lock INSIDE node:20 after any change —
+# tools/package-lock.json (regenerate the lock INSIDE node:22 after any change —
 # host-npm lockfileVersion can differ). `npm ci` installs the exact locked
 # tarballs and verifies each sha512 integrity hash → bit-for-bit reproducible npm
 # bytes, with nothing resolved at build time (this replaces the old per-package
@@ -84,7 +84,7 @@ RUN cd /opt/toolchain && \
 ENV PATH="/opt/toolchain/node_modules/.bin:${PATH}"
 # Verify the locked CLIs actually RUN on this base's Node (not just resolve on
 # PATH) — a pinned version may declare a Node engine this base doesn't satisfy
-# (e.g. pnpm 11 needs Node >=22.13 and crashes on Node 20). Running each `--version`
+# (e.g. pnpm 11 needs Node >=22.13; the base is node:22 which satisfies it). Running each `--version`
 # (or `--help`) catches that at build time. codegraph uses `--help` (vendored Node
 # 24 binary; `--version` is undocumented); caveman-shrink prints usage on no-args.
 # dev tools: run `--version` (this is what catches an incompatible Node engine).

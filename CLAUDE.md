@@ -10,10 +10,10 @@ This is a security-hardened Docker container that runs Claude Code with pre-inst
 
 ### Container Structure
 
-The container is built on Node.js 20 with the following layers:
+The container is built on Node.js 22 (LTS) with the following layers:
 
 1. **Base System** - Debian Bookworm with hardened security settings
-2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.159), OpenSpec (1.3.1), CodeGraph (0.9.7), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 10.34.1, typescript 6.0.3, ts-node 10.9.2, prettier 3.8.3, eslint 10.4.1)
+2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.159), OpenSpec (1.3.1), CodeGraph (0.9.8), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.5.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.8.3, eslint 10.4.1)
 3. **OpenSpec** - initialized into `/workspace` at build time with telemetry disabled via `OPENSPEC_TELEMETRY=0`
 4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified); `rtk init -g --auto-patch` installs a Claude Code PreToolUse hook that rewrites Bash commands through `rtk`
 5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.8.2`
@@ -61,7 +61,7 @@ Claude Code configuration is pre-configured in the container:
 docker build -t claude-code-container .
 
 # To change a pinned npm CLI version: edit tools/package.json, then regenerate the
-# lockfile inside node:20 (see "Environment Variables" → npm CLI versions), and rebuild.
+# lockfile inside node:22 (see "Environment Variables" → npm CLI versions), and rebuild.
 
 # Run Claude Code interactively
 ./run_claude.sh
@@ -203,14 +203,14 @@ This interacts with the container's read-only mount model — but works without 
 **npm CLI versions are NOT build args.** claude-code, openspec, codegraph, caveman-shrink,
 the stdio MCP servers, and dev tools are all pinned in `tools/package.json` and locked (with
 sha512 integrity) in `tools/package-lock.json`, installed via `npm ci`. To change a version:
-edit `tools/package.json`, then regenerate the lockfile **inside node:20** (host npm may write a
+edit `tools/package.json`, then regenerate the lockfile **inside node:22** (host npm may write a
 different `lockfileVersion`):
 ```bash
-docker run --rm -v "$PWD/tools:/w" -w /w node:20-bookworm-slim npm install --package-lock-only
+docker run --rm -v "$PWD/tools:/w" -w /w node:22-bookworm-slim npm install --package-lock-only
 ```
-Pin only Node-20-compatible versions — check `npm view <pkg>@<ver> engines.node` (e.g. pnpm 11
-requires Node >=22.13 and is incompatible; the image pins pnpm 10.x). The build-time gate runs
-each dev tool's `--version` to catch an incompatible engine.
+Pin only Node-22-compatible versions — check `npm view <pkg>@<ver> engines.node`. The build-time
+gate runs each dev tool's `--version` to catch an incompatible engine (this is how the earlier
+pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 
 **Build-time variables** (set during `docker build`):
 - `RTK_VERSION` - Git tag of the RTK release to download (default: `v0.42.0`); RTK is a
@@ -260,7 +260,7 @@ each dev tool's `--version` to catch an incompatible engine.
 - **ESLint** - JavaScript/TypeScript linting
 - **Prettier** - Code formatting
 - **OpenSpec** - `@fission-ai/openspec` CLI for spec-driven development (`openspec` binary)
-  - Installed globally via npm; requires Node.js >= 20.19.0 (satisfied by the `node:20-bookworm-slim` base)
+  - Installed globally via npm; requires Node.js >= 20.19.0 (satisfied by the `node:22-bookworm-slim` base)
   - Initialized into `/workspace` at build time via `openspec init /workspace --tools claude --force` (non-interactive: `--tools`/`--force` skip all prompts, default profile `core`)
   - Scaffolds `/workspace/openspec/` (`specs/`, `changes/`, `config.yaml`) and `/workspace/.claude/` (`commands/opsx/` + `skills/`: `openspec-propose`, `openspec-explore`, `openspec-apply-change`, `openspec-archive-change`)
   - Does NOT overwrite an existing `settings.local.json` or `CLAUDE.md` in the target
@@ -280,8 +280,8 @@ each dev tool's `--version` to catch an incompatible engine.
   - Installed with **`--no-mcp-shrink`**: caveman's auto-registration wired `caveman-shrink` as a standalone MCP server with no upstream command, which always `✗ Failed to connect` (it is middleware, not a server). Instead `caveman-shrink` is pre-installed globally and applied as a wrapper around the codegraph MCP server (see CodeGraph / MCP Servers)
   - Source: https://github.com/JuliusBrussee/caveman
 - **CodeGraph** - Pre-indexed code knowledge graph (symbols, call graph, impact) served to agents over MCP (`codegraph` binary)
-  - Installed via `npm ci` from the locked toolchain (`@colbymchenry/codegraph@0.9.7`); also registered as the `codegraph` MCP server, wrapped by `caveman-shrink` to compress its (verbose) tool descriptions — verified `✓ Connected` (see "MCP Servers")
-  - **Not pure JS:** the npm package is a thin shim; the real artifact is a per-platform optionalDependency (`@colbymchenry/codegraph-linux-x64`) bundling a vendored Node 24 runtime + prebuilt binary. `codegraph --help` at build time verifies the binary runs (**verified**: the vendored Node 24 binary runs on `node:20-bookworm-slim`)
+  - Installed via `npm ci` from the locked toolchain (`@colbymchenry/codegraph@0.9.8`); also registered as the `codegraph` MCP server, wrapped by `caveman-shrink` to compress its (verbose) tool descriptions — verified `✓ Connected` (see "MCP Servers")
+  - **Not pure JS:** the npm package is a thin shim; the real artifact is a per-platform optionalDependency (`@colbymchenry/codegraph-linux-x64`) bundling a vendored Node 24 runtime + prebuilt binary. `codegraph --help` at build time verifies the binary runs (**verified**: the vendored Node 24 binary runs on `node:22-bookworm-slim`)
   - `CODEGRAPH_NO_DOWNLOAD=1` (baked-in ENV) forbids the shim's runtime fallback that fetches the binary from GitHub Releases — the binary must come from the npm registry only
   - 100% local: local SQLite index (`.codegraph/codegraph.db`, FTS5), no API keys, no external services
   - See "CodeGraph indexing" for the index write-location constraint in this container
@@ -356,7 +356,7 @@ Inside the debug shell, you can run diagnostics manually:
 
 - `Dockerfile` - Complete container build configuration
 - `tools/package.json` - Pinned npm CLI toolchain (claude-code, openspec, codegraph, caveman-shrink, MCP servers, dev tools) — exact versions, single source of truth
-- `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:20 after editing package.json
+- `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:22 after editing package.json
 - `claude-config.json` - Claude Code configuration with all permissions
 - `settings.local.json` - Local Claude settings
 - `mcp-servers.json` - Base MCP server configurations (always installed)

@@ -1,7 +1,7 @@
 # claude-code-standalone
 
 Security-hardened Docker container for running [Claude Code](https://docs.anthropic.com/claude-code)
-in an isolated, least-privilege environment. Built on Node.js 20 (Debian Bookworm slim) with a
+in an isolated, least-privilege environment. Built on Node.js 22 LTS (Debian Bookworm slim) with a
 pinned, lockfile-controlled CLI toolchain and a curated set of MCP servers.
 
 ## Why
@@ -78,10 +78,10 @@ cp .env.example .env
 ```
 
 To change a pinned tool version, edit `tools/package.json`, then regenerate the lockfile inside
-Node 20:
+Node 22:
 
 ```bash
-docker run --rm -v "$PWD/tools:/w" -w /w node:20-bookworm-slim npm install --package-lock-only
+docker run --rm -v "$PWD/tools:/w" -w /w node:22-bookworm-slim npm install --package-lock-only
 ```
 
 ## Run
