@@ -1,0 +1,35 @@
+name: Docker build
+
+# Builds the container image to verify the Dockerfile + pinned toolchain.
+# No secrets are used: `docker build` does not consume any token (all secrets
+# are runtime-only, passed via .env at `docker run`). The image is NOT pushed
+# to any registry here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: claude-code-standalone:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
