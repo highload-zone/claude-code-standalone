@@ -1,24 +1,30 @@
-name: Docker build
+name: Docker build & publish
 
-# Builds the container image for every supported architecture via a matrix, to
-# verify the Dockerfile + pinned per-arch toolchain. No secrets are used —
-# `docker build` is token-free; all secrets are runtime-only. Images are NOT
-# pushed to any registry here (build-verification only).
+# Builds the image for amd64 + arm64 and publishes a single multi-arch manifest
+# to GitHub Container Registry (GHCR). Uses the built-in GITHUB_TOKEN (no extra
+# secrets). On pull_request it only BUILDS (verification, no push); on push to
+# main and on version tags it PUBLISHES to ghcr.io/<owner>/<repo>.
 #
-# Supported Linux archs are limited by RTK, which ships only x86_64 (musl) and
-# aarch64 (gnu) — so the matrix is amd64 + arm64. Each runs natively on its own
-# GitHub-hosted runner (no QEMU emulation). If arm64 runners are unavailable for
-# this repo, switch the arm64 leg to ubuntu-latest + docker/setup-qemu-action.
+# Supported archs are limited by RTK (x86_64-musl, aarch64-gnu) → amd64 + arm64.
+# Each arch builds natively on its own runner, then digests are merged into one
+# manifest (no QEMU). RTK arm64 is gnu-linked and needs glibc >= 2.39 (Debian
+# trixie base provides 2.41).
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build:
@@ -41,12 +47,87 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image (${{ matrix.platform }})
+      # Login only when we will push (not on pull_request — fork PRs lack write).
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push by digest on non-PR)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ matrix.platform }}
-          push: false
-          tags: claude-code-standalone:ci-${{ matrix.arch }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+          # On PR: load=false, push=false → build-only verification.
+          # On push/tag: push by digest (manifest assembled in the merge job).
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, env.IMAGE_NAME) || 'type=cacheonly' }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: publish multi-arch manifest
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Release versioning: a git tag v1.2.3 (a Release) publishes
+          #   :1.2.3, :1.2, :1  — the version is pinned by the release tag.
+          # main publishes :latest; every build also gets a :sha-<short> tag.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Create & push manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      - name: Inspect published manifest
+        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

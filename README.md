@@ -70,7 +70,22 @@ cp .env.example .env
 # .env is gitignored and must never be committed.
 ```
 
-## Build
+## Container image (GHCR)
+
+CI publishes a multi-arch image (linux/amd64 + linux/arm64) to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/highload-zone/claude-code-standalone:latest
+```
+
+- **Versioning is pinned by releases.** Pushing a git tag `vX.Y.Z` (i.e. a Release) publishes
+  `:X.Y.Z`, `:X.Y`, `:X` tags. `main` publishes `:latest`; every build also gets `:sha-<short>`.
+- Built with the built-in `GITHUB_TOKEN` (`packages: write`) — no extra secrets. Pull requests only
+  build for verification and do **not** push.
+- The GHCR package may be created **private** on first publish — make it public in the repo's
+  *Packages* settings if you want anonymous `docker pull`.
+
+## Build (locally)
 
 ```bash
 ./build.sh           # build image (npm versions come from the lockfile)
