@@ -137,56 +137,25 @@ RUN chmod +x /app/install-mcp-servers.sh /app/diagnose-mcp.sh
 
 ################# <--- Configure MCP Providers
 
-# Setup secure workspace with proper permissions
-RUN mkdir -p /workspace/input \
-    && mkdir -p /workspace/output \
-    && mkdir -p /workspace/data \
-    && mkdir -p /workspace/temp \
-    && chown -R ${USER_NAME}:${USER_NAME} /workspace \
-    && chmod 755 /workspace \
-    && chmod 750 /workspace/input \
-    && chmod 750 /workspace/data \
-    && chmod 755 /workspace/output \
-    && chmod 755 /workspace/temp
+# Single read-write mode: the project is bind-mounted at /workspace at runtime
+# (no separate input/output dirs). Just ensure the mount point exists and is
+# world-writable (the runtime --user owns the bind-mounted project itself).
+RUN mkdir -p /workspace && chmod 777 /workspace
 
+# Bake the Claude config into the build user's HOME (/home/claude). At runtime the
+# container is started with --user $(id -u):$(id -g) to match host file ownership
+# for the rw project mount, so HOME is relocated to a writable tmpfs and the
+# entrypoint copies this baked state into it (/home/claude is made world-readable
+# after all agent init below). The config/state baked here: claude-config,
+# settings, plus RTK hook + caveman plugin added by later layers.
+COPY --chown=${USER_NAME}:${USER_NAME} claude-config.json /home/${USER_NAME}/.claude.json
+# COPY --chown creates the .claude dir owned by the user (a root `mkdir` here would
+# leave it root-owned and break the later openspec/rtk init under USER claude).
+COPY --chown=${USER_NAME}:${USER_NAME} settings.local.json /home/${USER_NAME}/.claude/settings.local.json
 
-# Copy the working Claude config
-COPY --chown=${USER_NAME}:${USER_NAME} claude-config.json /tmp/claude-config.json
-COPY --chown=${USER_NAME}:${USER_NAME} settings.local.json /tmp/settings.local.json
-
-# Setup Claude configuration (as root, will switch to claude user)
-RUN echo '#!/bin/bash\n\
-set -e\n\
-echo "Setting up Claude configuration..."\n\
-\n\
-# Switch to claude user for configuration\n\
-su - claude << "EOF_CLAUDE_USER"\n\
-set -e\n\
-cd /workspace\n\
-\n\
-# Copy the pre-configured Claude config\n\
-cp /tmp/claude-config.json ~/.claude.json\n\
-\n\
-# Create .claude directory and copy settings.local.json\n\
-mkdir -p ~/.claude\n\
-cp /tmp/settings.local.json ~/.claude/settings.local.json\n\
-mkdir -p /workspace/.claude\n\
-cp /tmp/settings.local.json /workspace/.claude/settings.local.json\n\
-\n\
-echo "Claude configuration complete"\n\
-ls -la ~/.claude.json\n\
-ls -la ~/.claude/settings.local.json\n\
-ls -la /workspace/.claude/settings.local.json\n\
-\n\
-EOF_CLAUDE_USER\n\
-\n\
-' > /usr/local/bin/configure-claude.sh \
-    && chmod +x /usr/local/bin/configure-claude.sh \
-    && /usr/local/bin/configure-claude.sh
-
-# Switch to non-root user for security
+# Switch to non-root user for the agent-init layers (git config, RTK, caveman).
 USER ${USER_NAME}
-WORKDIR /workspace
+WORKDIR /home/${USER_NAME}
 
 # ============================================================================
 # Install MCP Servers
@@ -201,17 +170,14 @@ RUN git config --global core.pager delta && \
     git config --global delta.side-by-side true
 
 # ============================================================================
-# Initialize OpenSpec in the workspace (runs as the claude user, in /workspace)
-# ============================================================================
-# Telemetry is opt-out only via the OPENSPEC_TELEMETRY env var (there is no
-# `telemetry.enabled` config key). Setting it here disables telemetry for both
-# this build-time init and runtime (security-hardened, isolated image).
-# `init --tools claude --force` runs non-interactively (verified: no prompts with
-# stdin closed) and scaffolds /workspace/openspec/ (specs, changes, config.yaml)
-# plus /workspace/.claude/{commands/opsx,skills}/. It does NOT overwrite an
-# existing settings.local.json or CLAUDE.md (verified).
+# Initialize OpenSpec into the build HOME (NOT /workspace — that is overlaid by
+# the rw project mount at runtime). This bakes the Claude Code integration
+# (~/.claude/commands/opsx + skills) which the entrypoint copies into the runtime
+# HOME, so the opsx slash-commands are available. `openspec init` in an actual
+# project is still run on demand by the agent inside the rw /workspace.
+# Telemetry opt-out via OPENSPEC_TELEMETRY (no telemetry.enabled config key).
 ENV OPENSPEC_TELEMETRY=0
-RUN openspec init /workspace --tools claude --force
+RUN openspec init "/home/${USER_NAME}" --tools claude --force
 
 # ============================================================================
 # Agent tooling: RTK init + Caveman (runs as the claude user)
@@ -263,10 +229,23 @@ RUN npx -y github:JuliusBrussee/caveman#v1.8.2 --non-interactive --only claude -
 #   in the threat model.
 RUN echo '#!/bin/bash\n\
 set -e\n\
-echo "Starting Claude Code (Remote Control enabled)..."\n\
+# Runtime starts with --user $(id -u):$(id -g) to match host ownership of the rw\n\
+# project mount. The baked agent state lives in /home/claude (built under a\n\
+# different uid, world-readable); copy it into this user'"'"'s writable HOME once.\n\
+export HOME="${HOME:-/home/agent}"\n\
+if [ "$HOME" != "/home/claude" ] && [ ! -e "$HOME/.claude.json" ]; then\n\
+  mkdir -p "$HOME"\n\
+  cp -a /home/claude/. "$HOME/" 2>/dev/null || true\n\
+fi\n\
+cd /workspace 2>/dev/null || cd "$HOME"\n\
+echo "Starting Claude Code (Remote Control enabled) in $(pwd)..."\n\
 exec claude --dangerously-skip-permissions --remote-control "$@"\n\
 ' > /home/${USER_NAME}/start-claude.sh \
     && chmod +x /home/${USER_NAME}/start-claude.sh
+
+# Make the baked HOME world-readable so the runtime --user (a different uid than
+# the build user) can copy it into its writable HOME (see start-claude.sh).
+RUN chmod -R a+rX /home/${USER_NAME}
 
 # Security: Set secure environment variables and limits
 ENV DEBIAN_FRONTEND=noninteractive \

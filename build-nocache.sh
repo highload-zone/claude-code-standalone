@@ -8,7 +8,7 @@ echo "🔨 Building Claude Code Container (no cache)..."
 echo "📦 npm CLI versions are pinned in tools/package.json + tools/package-lock.json (npm ci)"
 
 # Build the container. npm tool versions come from the lockfile, not a build arg.
-docker build --no-cache -t claude-code-container .
+docker build --no-cache -t claude-code-standalone .
 
 echo "✅ Container built successfully!"
 

@@ -42,10 +42,10 @@ This image is expected to run on a host where the **Docker daemon runs as root**
 may be root. Consequently:
 
 - **On a root-Docker host, `docker run` is equivalent to host root.** The wrapper scripts
-  (`run_claude.sh`, `run_claude_dev.sh`, `debug-shell.sh`) are **NOT a security boundary against a
-  hostile operator** — anyone who can run Docker can ignore them and mount `/`, add capabilities,
-  or pass `--privileged`. The scripts' guard checks (refusing `--privileged`, `--pid=host`,
-  `docker.sock`, uid 0, etc.) only catch **accidental misconfiguration**, not a deliberate operator.
+  (`run_claude.sh`, `debug-shell.sh`) are **NOT a security boundary against a hostile operator** —
+  anyone who can run Docker can ignore them and mount `/`, add capabilities, or pass `--privileged`.
+  The scripts' guard checks (refusing `--privileged`, `--pid=host`, `docker.sock`, uid 0, etc.) only
+  catch **accidental misconfiguration**, not a deliberate operator.
 - **Required invariants for the hardening to hold** (operator's responsibility): never mount
   `/var/run/docker.sock`, never use `--privileged` / `--cap-add` / `--pid=host` / `--network=host`,
   never `--user root`, never mount sensitive host paths. The provided scripts already satisfy these.
@@ -65,30 +65,30 @@ may be root. Consequently:
   On a root host this is an exfiltration channel under prompt injection — restrict egress at the
   Docker-network/daemon level (cap-drop=ALL prevents in-container iptables) or remove those MCP
   servers from `mcp-servers.json`.
-- **Prompt injection.** With `--dangerously-skip-permissions`, any analyzed file is executable
-  instructions for the autonomous agent. In read-only mode the blast radius is bounded by the ro
-  mount + cap-drop, but egress can still exfiltrate read code. **In dev mode it is not bounded** —
-  see below.
+- **Prompt injection (the main runtime risk).** With `--dangerously-skip-permissions`, any file in
+  the project is executable instructions for the autonomous agent. The project is mounted
+  **read-write**, so an injected agent can modify project files, push (if a deploy key is set), and
+  exfiltrate code via egress. Residual risk is **Medium** with a scoped deploy key (below). **Use on
+  trusted projects only** and review what the agent commits.
 - **Third-party trust.** RTK's `PreToolUse` hook rewrites every Bash command (compromise = injection
   into every shell call); CodeGraph ships an opaque vendored binary. Both are version/checksum
   pinned, but auditing them is the operator's responsibility.
 
-## Dev mode (`run_claude_dev.sh`) — elevated risk
+## Read-write agent mode (single mode)
 
-The read-write dev mode mounts the project `rw`, runs the agent autonomously, and (optionally) gives
-it a scoped git push credential. **Residual risk is Medium** with a scoped deploy key (the default
-recommendation), and **High** if you substitute ssh-agent forwarding (a forwarded agent can
-authenticate to *any* SSH host, not just `git push` — enabling pivot beyond the repo). Guardrails
-built into dev mode:
+The container runs as a single autonomous read-write agent: the project is bind-mounted `rw` at
+`/workspace`, and the container runs with `--user $(id -u):$(id -g)` so it owns the mount. Guardrails:
 
-- **Scoped deploy key** (read-only mounted, `IdentitiesOnly=yes`) instead of agent forwarding — the
-  agent can push only to that one repo and cannot ssh elsewhere. Set via `DEPLOY_KEY=/path/to/key`.
+- **Scoped deploy key for push** (read-only mounted, `IdentitiesOnly=yes`), set via
+  `DEPLOY_KEY=/path/to/key` — the agent can push only to that one repo and **cannot ssh elsewhere**
+  (deliberately not ssh-agent forwarding, which would authenticate to any SSH host). Without it,
+  edit + local commit work; push does not.
 - **Project git hooks are disabled** in the container (`core.hooksPath=/dev/null`) so an injected
   `.git/hooks` script does not execute on git operations.
-- **Footgun guards** (refuse `--privileged`/`docker.sock`/uid 0) as above.
-
-Use dev mode only on **trusted projects**. Even with the deploy key, a prompt-injected agent can
-modify project files / CI configs (rw) and push to the scoped repo — review what it commits.
+- **Footgun guards** (refuse `--privileged`/`docker.sock`/`--pid=host`/`--network=host`/`--cap-add`/
+  uid 0) as above.
+- Writable HOME is a tmpfs; the baked agent state is copied into it at start. The image's baked
+  `/home/claude` is world-readable (no secrets — `claude-config.json` is sanitized).
 
 ## Secrets
 

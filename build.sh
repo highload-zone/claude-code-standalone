@@ -8,7 +8,7 @@ echo "🔨 Building Claude Code Container..."
 echo "📦 npm CLI versions are pinned in tools/package.json + tools/package-lock.json (npm ci)"
 
 # Build the container. npm tool versions come from the lockfile, not a build arg.
-docker build -t claude-code-container .
+docker build -t claude-code-standalone .
 
 echo "✅ Container built successfully!"
 

@@ -9,8 +9,8 @@ echo "🔍 Running MCP Server Diagnostics..."
 echo ""
 
 # Check if container image exists
-if ! docker images claude-code-container | grep -q claude-code-container; then
-    echo "❌ Container image 'claude-code-container' not found!"
+if ! docker images claude-code-standalone | grep -q claude-code-standalone; then
+    echo "❌ Container image 'claude-code-standalone' not found!"
     echo "Please build the container first: ./build.sh"
     exit 1
 fi
@@ -43,7 +43,7 @@ if [ -f .env ]; then
 fi
 
 # Run diagnostics inside container
-docker "${DOCKER_ARGS[@]}" claude-code-container -c "/app/diagnose-mcp.sh"
+docker "${DOCKER_ARGS[@]}" claude-code-standalone -c "/app/diagnose-mcp.sh"
 
 echo ""
 echo "📋 Next steps based on results:"

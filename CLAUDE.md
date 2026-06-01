@@ -32,12 +32,14 @@ The container implements defense-in-depth:
 - Network isolation (bridge mode only)
 - Removed dangerous setuid binaries and network reconnaissance tools
 
-### Volume Mounts
+### Volume Mounts (single read-write mode)
 
-- `/workspace/input` - Read-only input directory (mounted from host)
-- `/workspace/output` - Read-write output directory for reports
-- `/workspace/data` - Optional read-only reference data directory
-- `/workspace/temp` - Non-executable temporary workspace
+- `/workspace` - the host project, mounted **read-write** (`$(pwd)`). The agent edits/commits/pushes
+  here. The container runs with `--user $(id -u):$(id -g)` so it owns this mount.
+- `HOME` (`/home/agent`) - writable tmpfs; the entrypoint copies the baked agent state
+  (`/home/claude`) into it at start.
+- `/tmp` - non-executable tmpfs scratch (`noexec,nosuid`)
+- optional `DEPLOY_KEY` - a scoped repo deploy key mounted read-only for `git push`
 
 ### Configuration
 
@@ -58,7 +60,7 @@ Claude Code configuration is pre-configured in the container:
 ./build-nocache.sh
 
 # Direct docker build command
-docker build -t claude-code-container .
+docker build -t claude-code-standalone .
 
 # To change a pinned npm CLI version: edit tools/package.json, then regenerate the
 # lockfile inside node:22 (see "Environment Variables" → npm CLI versions), and rebuild.
@@ -175,27 +177,18 @@ cat ~/.claude.json | jq '.projects["/workspace"].mcpServers | keys'
 cat ~/.claude.json | jq '.projects["/workspace"].mcpServers["perplexity"]'
 ```
 
-### CodeGraph indexing (write-location constraint)
+### CodeGraph indexing
 
-CodeGraph stores its index in a `.codegraph/` directory **inside the indexed code tree**
-(`<path>/.codegraph/codegraph.db`). There is no flag/env to relocate the DB away from `[path]`.
-This interacts with the container's read-only mount model — but works without copying code, as
-**verified by a build + run** (read-only `/workspace/input` mounted, `--cap-drop=ALL`):
+CodeGraph stores its index in `.codegraph/codegraph.db` inside the indexed tree. Since `/workspace`
+is now mounted **read-write**, this is straightforward:
 
-- ✅ **Index from the writable WORKDIR:** `cd /workspace && codegraph init -i /workspace`
-  indexes the whole `/workspace` tree — **including the read-only `/workspace/input` subdir
-  (read access is fine)** — and writes the DB to `/workspace/.codegraph/` (writable). Verified:
-  it indexed the mounted source and wrote **nothing** into `/workspace/input`.
-- ❌ **Do NOT** run `codegraph init -i /workspace/input` directly — it tries to `mkdir
-  /workspace/input/.codegraph` and fails with `ENOENT` on the read-only mount.
-- The MCP server (`codegraph serve --mcp`) is launched by Claude Code with the project as CWD
-  (`/workspace`, writable) and uses `/workspace/.codegraph/` when it exists. Without an index the
-  CodeGraph tools report "not initialized" (the MCP server itself still starts), so run
-  `codegraph init -i /workspace` once per session/project first.
-- The file watcher uses `inotify`; in a sandboxed/caps-dropped container it may not fire. If
-  needed, disable it with `CODEGRAPH_NO_DAEMON=1` and rely on connect-time catch-up, or run
-  `codegraph sync` manually.
-- Permissions: the image already allows `mcp__*` (full bypass in `claude-config.json`), so the
+- Run `codegraph init -i /workspace` once per project/session to build the index (writes
+  `/workspace/.codegraph/`). The MCP server (`codegraph serve --mcp`) is launched by Claude Code
+  with `/workspace` as CWD and uses that index; without it the tools report "not initialized" (the
+  server itself still starts).
+- The file watcher uses `inotify`; in a caps-dropped container it may not fire. If needed, disable it
+  with `CODEGRAPH_NO_DAEMON=1` and rely on connect-time catch-up, or run `codegraph sync` manually.
+- Permissions: the image allows `mcp__*` (full bypass in `claude-config.json`), so the
   `mcp__codegraph__*` tools need no extra allow-list entry.
 
 ## Environment Variables
@@ -236,18 +229,17 @@ pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 - The `typescript-lsp@claude-plugins-official` plugin is enabled (works with `ENABLE_LSP_TOOL=1`)
 - The OAuth account is hard-coded in this file — replace it if using a different account
 
-**Note:** Input/output directories are configured via volume mounts, not environment variables
+## Development Workflow (single read-write mode)
 
-## Development Workflow
-
-1. **Prepare input**: `run_claude.sh`/`debug-shell.sh` mount the **current directory**
-   (`$(pwd)`) as read-only at `/workspace/input` — there is no input-dir argument in
-   `run_claude.sh`; `debug-shell.sh` accepts an optional `[INPUT_DIR] [DATA_DIR]`.
-2. **Run container**: `./run_claude.sh` (the entrypoint runs `claude --dangerously-skip-permissions`)
-3. **Interactive development**: the container WORKDIR is `/workspace` (writable), and Claude
-   starts there — not in `/workspace/input`. Source mounted at `/workspace/input` is read-only;
-   write results to `/workspace/output` (host `./reports/`).
-4. **Review output**: Check `./reports/` directory for generated files
+1. **Run from your project**: `cd /path/to/repo && ./run_claude.sh`. The current directory is mounted
+   **read-write** at `/workspace`; the container runs as your host user (`--user $(id -u):$(id -g)`).
+2. **Entrypoint**: `claude --dangerously-skip-permissions --remote-control`; the entrypoint first
+   copies the baked agent state from `/home/claude` into the writable tmpfs HOME.
+3. **Autonomous agent**: Claude edits/commits the project directly in `/workspace`. For `git push`,
+   set `DEPLOY_KEY=/path/to/repo_deploy_key` (scoped, read-only mounted). Commit identity comes from
+   your host `git config` (passed as env).
+4. **Trust**: the project is read-write and the agent is autonomous — use on trusted projects (see
+   [SECURITY.md](./SECURITY.md)).
 
 ## Pre-installed Tools
 
@@ -261,11 +253,9 @@ pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 - **Prettier** - Code formatting
 - **OpenSpec** - `@fission-ai/openspec` CLI for spec-driven development (`openspec` binary)
   - Installed globally via npm; requires Node.js >= 20.19.0 (satisfied by the `node:22-trixie-slim` base)
-  - Initialized into `/workspace` at build time via `openspec init /workspace --tools claude --force` (non-interactive: `--tools`/`--force` skip all prompts, default profile `core`)
-  - Scaffolds `/workspace/openspec/` (`specs/`, `changes/`, `config.yaml`) and `/workspace/.claude/` (`commands/opsx/` + `skills/`: `openspec-propose`, `openspec-explore`, `openspec-apply-change`, `openspec-archive-change`)
-  - Does NOT overwrite an existing `settings.local.json` or `CLAUDE.md` in the target
+  - Initialized at build time into the build HOME via `openspec init /home/claude --tools claude --force` (non-interactive). This bakes `~/.claude/commands/opsx` + skills, which the entrypoint copies into the runtime HOME — so the opsx slash-commands are available. (`/workspace` is NOT initialized at build because it is overlaid by the rw project mount at runtime.)
+  - Run `openspec init` inside the actual project (`/workspace`, read-write) on demand
   - Telemetry is opt-out only via the `OPENSPEC_TELEMETRY=0` env var (no `telemetry.enabled` config key exists); set as baked-in ENV, covering build and runtime
-  - **Note:** the user's mounted project lives in the read-only `/workspace/input`; the OpenSpec scaffold is in the writable WORKDIR `/workspace`, where Claude Code starts
   - Source: https://github.com/Fission-AI/OpenSpec
 - **RTK** - Rust Token Killer; CLI proxy that filters/compresses command output to cut LLM token usage (`rtk` binary)
   - Static musl binary downloaded from GitHub releases into `/usr/local/bin`; pinned via `RTK_VERSION` build arg (default `v0.42.0`), no Rust toolchain needed

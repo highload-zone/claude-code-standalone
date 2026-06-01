@@ -1,103 +1,85 @@
 #!/bin/bash
 
-# Interactive Claude Code Shell
-set -e
+# Claude Code — single read-write agent mode.
+#
+# The current directory is mounted READ-WRITE at /workspace and Claude Code runs
+# as a fully autonomous agent (edit / commit / push). The container runs with
+# --user $(id -u):$(id -g) so it owns the bind-mounted project (one image, works
+# for any host uid); the baked agent state (config, RTK hook, caveman plugin,
+# opsx commands) is copied into a writable tmpfs HOME by the entrypoint.
+#
+# Threat model (SECURITY.md): on a root-Docker host `docker run` == host root,
+# so this wrapper is NOT a boundary vs a hostile operator — the guards below only
+# catch accidental misconfig. Use on TRUSTED projects only.
 
-# Footgun guards — catch ACCIDENTAL misconfig only. On a root-Docker host this is
-# NOT a boundary against a hostile operator (docker run == host root); see SECURITY.md.
+set -euo pipefail
+
+PROJECT_DIR="$(pwd)"
+IMAGE="${CLAUDE_IMAGE:-claude-code-standalone:latest}"
+CLAUDE_ARGS=("$@")
+
+# --- Footgun guards (not a defense against a hostile operator — see SECURITY.md) ---
 for a in "$@"; do
   case "$a" in
     --privileged|--pid=host|--network=host|--cap-add*|*docker.sock*)
-      echo "❌ Refusing: '$a' weakens isolation and is not accepted by this script." >&2
-      exit 1;;
+      echo "❌ Refusing: argument '$a' weakens isolation." >&2; exit 1;;
   esac
 done
-[ "$(id -u)" -eq 0 ] && { echo "❌ Refusing to run as root on the host — use your normal user." >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] && { echo "❌ Refusing to run as root on the host." >&2; exit 1; }
 
-# Collect all arguments to pass to Claude
-CLAUDE_ARGS=("$@")
-
-# Fixed paths - no argument parsing needed
-INPUT_DIR="$(pwd)"
-DATA_DIR="workspace/data"
-
-# Load environment variables from .env for use in this script
-if [ -f .env ]; then
-    set -a
-    source .env
-    set +a
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "❌ Image '$IMAGE' not found. Build it: ./build.sh (or set CLAUDE_IMAGE / pull from GHCR)" >&2
+  exit 1
 fi
 
-if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-    echo "⚠️  Warning: CLAUDE_CODE_OAUTH_TOKEN not set. Claude Code may not work properly."
-    echo "   Set it with: export CLAUDE_CODE_OAUTH_TOKEN='your-oauth-token'"
-    echo ""
-fi
+# --- Load .env ---
+if [ -f .env ]; then set -a; . ./.env; set +a; fi
+[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && echo "⚠️  CLAUDE_CODE_OAUTH_TOKEN not set — Claude Code may not work."
 
-# Create reports directory
-mkdir -p reports
-
-# Build Docker run command with enhanced security
 DOCKER_ARGS=(
-    "run" "-it" "--rm"
-    # Security: Drop all capabilities
-    "--cap-drop=ALL"
-    # Security: Prevent privilege escalation
-    "--security-opt=no-new-privileges:true"
-    # Security: Non-executable temp filesystem
-    "--tmpfs" "/tmp:noexec,nosuid,size=100m"
-    "--tmpfs" "/workspace/temp:noexec,nosuid,size=2g"
-    # Security: Limit PIDs to prevent fork bombs
-    "--pids-limit=100"
-    # Security: Restrict network to external only (no host network access)
-    "--network=bridge"
-    "--add-host=host.docker.internal:127.0.0.1"
-    # Volume mounts
-    "-v" "$INPUT_DIR:/workspace/input:ro"
-    "-v" "$(pwd)/reports:/workspace/output:rw"
-    # Environment variables
-    "-e" "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}"
+  run -it --rm
+  --cap-drop=ALL
+  --security-opt=no-new-privileges:true
+  --pids-limit=100
+  --network=bridge
+  # Match host ownership so the rw project mount is writable by the agent.
+  --user "$(id -u):$(id -g)"
+  # Writable HOME on tmpfs; the entrypoint copies the baked agent state into it.
+  --tmpfs "/home/agent:exec,mode=1777,size=512m"
+  -e HOME=/home/agent
+  # Non-executable scratch space.
+  --tmpfs "/tmp:noexec,nosuid,size=100m"
+  # Project mounted READ-WRITE — the agent edits/commits/pushes here.
+  -v "$PROJECT_DIR:/workspace:rw"
+  -w /workspace
+  -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}"
 )
 
-# Load and pass all environment variables from .env file if it exists
+# --- git commit identity from host (via env, not a gitconfig mount) ---
+gn="$(git config --get user.name 2>/dev/null || true)"
+ge="$(git config --get user.email 2>/dev/null || true)"
+[ -n "$gn" ] && DOCKER_ARGS+=( -e "GIT_AUTHOR_NAME=$gn" -e "GIT_COMMITTER_NAME=$gn" )
+[ -n "$ge" ] && DOCKER_ARGS+=( -e "GIT_AUTHOR_EMAIL=$ge" -e "GIT_COMMITTER_EMAIL=$ge" )
+
+# --- Scoped deploy key for git push (preferred over ssh-agent forwarding) ---
+if [ -n "${DEPLOY_KEY:-}" ] && [ -f "${DEPLOY_KEY}" ]; then
+  DOCKER_ARGS+=(
+    -v "${DEPLOY_KEY}:/home/agent/deploy_key:ro"
+    -e "GIT_SSH_COMMAND=ssh -i /home/agent/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+  )
+  echo "🔑 Scoped deploy key mounted (push limited to that key's repo, no ssh pivot)."
+else
+  echo "ℹ️  No DEPLOY_KEY — edit + local commit work; 'git push' needs: export DEPLOY_KEY=/path/to/key"
+fi
+
+# --- Pass remaining .env vars (MCP API keys) ---
 if [ -f .env ]; then
-    echo "📝 Loading environment variables from .env"
-
-    # Read .env file and pass all non-empty, non-comment lines to Docker
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # Skip empty lines and comments
-        [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*# ]] && continue
-
-        # Extract variable name (before =)
-        var_name=$(echo "$line" | cut -d= -f1)
-
-        # Skip if variable name is empty
-        [[ -z "$var_name" ]] && continue
-
-        # Get the actual value from current environment (already sourced or exported)
-        var_value="${!var_name:-}"
-
-        # Pass to Docker if value is set
-        if [ -n "$var_value" ]; then
-            DOCKER_ARGS+=("-e" "$var_name=$var_value")
-            echo "  → Passing $var_name"
-        fi
-    done < .env
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue;; esac
+    n="${line%%=*}"; [ -z "$n" ] && continue
+    v="${!n:-}"; [ -n "$v" ] && DOCKER_ARGS+=( -e "$n=$v" )
+  done < .env
 fi
 
-# Add data directory if it exists
-if [ -d "$DATA_DIR" ]; then
-    DOCKER_ARGS+=("-v" "$DATA_DIR:/workspace/data:ro")
-    echo "📚 Using reference data from: $DATA_DIR"
-fi
-
-echo "🚀 Starting Claude Code in interactive mode..."
-echo "📁 Input: $INPUT_DIR"
-echo "📊 Output: $(pwd)/reports"
-if [[ ${#CLAUDE_ARGS[@]} -gt 0 ]]; then
-    echo "🔧 Claude options: ${CLAUDE_ARGS[*]}"
-fi
-echo ""
-
-# Run the container with Claude Code in interactive mode, passing through any additional arguments
-docker "${DOCKER_ARGS[@]}" claude-code-container "${CLAUDE_ARGS[@]}"
+echo "🚀 Claude Code agent (read-write) on: $PROJECT_DIR"
+docker "${DOCKER_ARGS[@]}" "$IMAGE" "${CLAUDE_ARGS[@]}"
