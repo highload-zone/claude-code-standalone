@@ -5,6 +5,7 @@
   "description": "Pinned, lockfile-controlled global CLI toolchain for the claude-standalone container. Installed via `npm ci` for bit-for-bit reproducible npm tarballs (integrity-verified). Do not add `^`/`~` ranges here — exact versions only; regenerate package-lock.json inside node:22 after any change.",
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.159",
+    "@agentclientprotocol/claude-agent-acp": "0.39.0",
     "@fission-ai/openspec": "1.3.1",
     "@colbymchenry/codegraph": "0.9.8",
     "caveman-shrink": "0.1.0",

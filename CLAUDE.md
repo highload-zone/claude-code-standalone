@@ -71,6 +71,9 @@ docker build -t claude-code-standalone .
 # Run with specific Claude Code arguments
 ./run_claude.sh --model opus --verbose
 
+# Expose the container as an ACP agent for an IDE (Zed) — stdio, launched BY the editor
+./run_acp.sh
+
 # Open debug shell in container
 ./debug-shell.sh
 
@@ -241,6 +244,34 @@ pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 4. **Trust**: the project is read-write and the agent is autonomous — use on trusted projects (see
    [SECURITY.md](./SECURITY.md)).
 
+## IDE integration (ACP + Dev Container)
+
+Two extra entrypoints exist beside the autonomous `run_claude.sh`; they share the same image.
+
+- **ACP adapter — `run_acp.sh`** (`@agentclientprotocol/claude-agent-acp`, bin `claude-agent-acp`).
+  Exposes the container as an [Agent Client Protocol](https://agentclientprotocol.com) agent that an
+  external editor (Zed) **launches over stdio** and drives via JSON-RPC. Key implementation facts:
+  - `docker run -i` (NOT `-it`): stdout is the JSON-RPC channel, so `start-acp.sh` and `run_acp.sh`
+    send all diagnostics to **stderr**. Verified from the package's `src/index.ts` that a no-arg run
+    calls `process.stdin.resume()` and blocks (so the Dockerfile build-gate only checks presence,
+    `command -v claude-agent-acp`, never runs it).
+  - **Path coherence**: the project is mounted at its **identical host-absolute path**
+    (`-v "$PWD:$PWD" -w "$PWD"`), not `/workspace`, because the editor sends host-absolute paths for
+    cwd / `@`-mentions / diffs.
+  - `claude-agent-acp` is **not standalone** — it spawns a Claude Code binary via the Claude Agent
+    SDK. `ENV CLAUDE_CODE_EXECUTABLE=/opt/toolchain/node_modules/.bin/claude` (set in the Dockerfile)
+    pins it to the already-audited toolchain `claude` instead of the SDK's bundled per-platform
+    binary. Auth therefore uses the same `CLAUDE_CODE_OAUTH_TOKEN`.
+  - **Permission posture**: it does NOT pass `--dangerously-skip-permissions`; tool calls are gated
+    by the editor UI (human approves) — *less* permissive than the main entrypoint (see SECURITY.md).
+  - Zed setup: add an `agent_servers` entry in `~/.config/zed/settings.json` pointing `command` at
+    the absolute path of `run_acp.sh` (see README "Use from an IDE (Zed / ACP)").
+- **Dev Container — `.devcontainer/devcontainer.json`**. Opens the project *inside* the image as an
+  interactive dev environment. Pulls the GHCR image; `overrideCommand: true` suppresses the
+  auto-launch ENTRYPOINT (you run `claude` yourself). Hardened (`cap-drop=ALL` + the minimal caps the
+  `updateRemoteUserUID` remap needs: `CHOWN`/`DAC_OVERRIDE`/`FOWNER`/`SETUID`/`SETGID`),
+  `no-new-privileges`, `--pids-limit=512`, non-root `claude` user.
+
 ## Pre-installed Tools
 
 ### Package Managers
@@ -355,7 +386,9 @@ Inside the debug shell, you can run diagnostics manually:
 - `.env.example` - Example environment variables for MCP servers
 - `.env` - Your local environment variables (create from .env.example)
 - `.dockerignore` - Files excluded from Docker build context
-- `run_claude.sh` - Main entry point for running Claude Code
+- `run_claude.sh` - Main entry point for running Claude Code (autonomous agent)
+- `run_acp.sh` - ACP entry point for IDE use (Zed); launched BY the editor over stdio
+- `.devcontainer/devcontainer.json` - Dev Container definition (interactive dev inside the image)
 - `debug-shell.sh` - Debug shell access
 - `run-diagnostics.sh` - Automated MCP server diagnostics (NEW)
 - `diagnose-mcp.sh` - Diagnostics script (runs inside container)

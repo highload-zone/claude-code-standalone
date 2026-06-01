@@ -58,6 +58,8 @@ Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`
 integrity, exact versions):
 
 - `@anthropic-ai/claude-code` (2.1.159), `@fission-ai/openspec` (1.3.1)
+- `@agentclientprotocol/claude-agent-acp` (0.39.0) — ACP adapter for IDE use (Zed); reuses
+  the pinned `claude` binary via `CLAUDE_CODE_EXECUTABLE`
 - `@colbymchenry/codegraph` (0.9.8, MCP) wrapped by `caveman-shrink` (0.1.0)
 - MCP servers: `sequential-thinking`, `context7` (HTTP), `perplexity`
 - caveman skill (plugin, tag `v1.8.2`)
@@ -119,6 +121,7 @@ From your project directory:
 ```bash
 ./run_claude.sh                 # autonomous Claude Code agent over the current dir (read-write)
 ./run_claude.sh --model opus    # pass-through Claude Code args
+./run_acp.sh                    # expose the container as an ACP agent for an IDE (Zed) — see below
 ./debug-shell.sh                # bash shell inside the container
 ./run-diagnostics.sh            # MCP server diagnostics
 ```
@@ -135,6 +138,54 @@ export DEPLOY_KEY=/path/to/repo_deploy_key
 
 Without `DEPLOY_KEY`, edit + local commit work; push does not. Git commit identity is taken from your
 host `git config` (passed as env), so commits are attributed to you.
+
+## Use from an IDE (Zed / ACP)
+
+`run_acp.sh` exposes the container as an [Agent Client Protocol](https://agentclientprotocol.com)
+agent (`@agentclientprotocol/claude-agent-acp`), which ACP-compatible editors like
+[Zed](https://zed.dev/docs/ai/external-agents) launch and drive over **stdio**. The editor speaks
+JSON-RPC to the in-container agent; tool calls (edits, commands) surface as **permission requests in
+the editor UI** — a human approves them, so this path is *less* permissive than the autonomous
+`run_claude.sh` entrypoint.
+
+Two things make it work and differ from `run_claude.sh`:
+
+- **stdio, not a TTY** (`docker run -i`). stdout carries only JSON-RPC; the wrapper prints all
+  diagnostics to stderr.
+- **Path coherence.** Zed sends host-absolute paths (cwd, `@`-mentions, diffs), so the project is
+  mounted at the **identical absolute path** (`-v "$PWD:$PWD" -w "$PWD"`), not at `/workspace`.
+
+Add this to Zed's `settings.json` (`~/.config/zed/settings.json`), using the **absolute** path to
+`run_acp.sh` and running Zed from your project directory (the wrapper mounts `$PWD`):
+
+```json
+{
+  "agent_servers": {
+    "Claude (container)": {
+      "command": "/absolute/path/to/claude-standalone/run_acp.sh",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+
+Then pick "Claude (container)" in Zed's agent panel. Auth uses the same `CLAUDE_CODE_OAUTH_TOKEN`
+from your `.env`/host env as the other modes (the ACP adapter delegates to the pinned `claude`
+binary via `CLAUDE_CODE_EXECUTABLE`). `git push` works the same way via `DEPLOY_KEY`.
+
+## Dev Container
+
+`.devcontainer/devcontainer.json` opens your project **inside** the hardened image as an interactive
+development environment (VS Code Dev Containers, JetBrains Gateway, GitHub Codespaces, or the
+`devcontainer` CLI). Unlike the agent modes, you work in the container shell and run `claude`
+yourself; the image's auto-launch ENTRYPOINT is suppressed (`overrideCommand: true`).
+
+- Pulls `ghcr.io/highload-zone/claude-code-standalone:latest` (pin a release tag for reproducibility).
+- Keeps the hardened profile (`cap-drop=ALL` + minimal caps for the uid-remap, `no-new-privileges`)
+  with a raised `--pids-limit=512` for interactive tooling.
+- Runs as the non-root `claude` user with `updateRemoteUserUID` so workspace files are owned by you.
+- Reads `CLAUDE_CODE_OAUTH_TOKEN` / `CONTEXT7_API_KEY` / `PERPLEXITY_API_KEY` from your host env.
 
 ## Security disclosures
 

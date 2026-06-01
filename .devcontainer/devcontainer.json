@@ -1,0 +1,62 @@
+// Dev Container for claude-code-standalone.
+//
+// Opens your project INSIDE the hardened container as an interactive development
+// environment (VS Code Dev Containers, JetBrains Gateway, GitHub Codespaces, or
+// the `devcontainer` CLI). This is distinct from the two agent entrypoints:
+//   - run_claude.sh  → autonomous Claude Code TUI
+//   - run_acp.sh      → ACP adapter an external IDE (Zed) drives over stdio
+// Here YOU work in the container shell and invoke `claude` yourself when you want.
+//
+// The image's ENTRYPOINT (claude --remote-control) is intentionally NOT run:
+// "overrideCommand": true makes the dev container keep itself alive with a sleep
+// loop instead, so opening the workspace does not auto-launch the agent.
+{
+  "name": "claude-code-standalone",
+
+  // Pull the published multi-arch image from GHCR (per project decision). To pin a
+  // version, replace :latest with a release tag, e.g. :1 / :1.2 / :1.2.3.
+  // To develop against a locally built image instead, comment "image" out and use:
+  //   "build": { "dockerfile": "../Dockerfile" }
+  "image": "ghcr.io/highload-zone/claude-code-standalone:latest",
+
+  // Do NOT run the image ENTRYPOINT (the Claude agent); keep the container alive
+  // for an interactive session. Defaults to true for image-based dev containers,
+  // set explicitly for clarity.
+  "overrideCommand": true,
+
+  // Run as the image's non-root user. updateRemoteUserUID remaps that user's
+  // uid/gid to the host user's so files created in the bind-mounted workspace are
+  // owned by you (host uid 1000 != image uid 1001 → remap is required for writes).
+  "remoteUser": "claude",
+  "updateRemoteUserUID": true,
+
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+
+  // Hardened profile (per project decision) with a raised pids cap for interactive
+  // dev (test runners / language servers / builds fork many processes).
+  //   - cap-drop=ALL removes every Linux capability, then we add back ONLY the
+  //     minimal set the one-time uid-remap (usermod + chown -R $HOME) needs at
+  //     container start; the dangerous caps (SYS_ADMIN, NET_ADMIN, NET_RAW,
+  //     SYS_PTRACE, SYS_MODULE, …) stay dropped. The interactive `claude` user is
+  //     unprivileged and holds none of these in its effective set.
+  //   - no-new-privileges blocks setuid escalation.
+  "runArgs": [
+    "--cap-drop=ALL",
+    "--cap-add=CHOWN",
+    "--cap-add=DAC_OVERRIDE",
+    "--cap-add=FOWNER",
+    "--cap-add=SETUID",
+    "--cap-add=SETGID",
+    "--security-opt=no-new-privileges:true",
+    "--pids-limit=512"
+  ],
+
+  // API keys are taken from your host environment (export them, or `set -a; . ./.env`
+  // before launching). Empty if unset — fill in for the matching MCP servers.
+  "containerEnv": {
+    "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}",
+    "CONTEXT7_API_KEY": "${localEnv:CONTEXT7_API_KEY}",
+    "PERPLEXITY_API_KEY": "${localEnv:PERPLEXITY_API_KEY}"
+  }
+}

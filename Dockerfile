@@ -9,11 +9,19 @@ ARG USER_NAME=claude
 # RTK is a GitHub-release binary (not npm), so it keeps a version + sha256 arg.
 ARG RTK_VERSION=v0.42.0
 
-# Create non-root user with specific UID/GID
+# Create non-root user with specific UID/GID.
 # Free the requested UID/GID if the base image already uses it (node:22 ships a
 # `node` user at uid/gid 1000) so the image can be built with --build-arg
 # USER_ID=$(id -u) for the read-write dev mode without a uid clash.
-RUN if getent passwd ${USER_ID} >/dev/null 2>&1; then userdel -r "$(getent passwd ${USER_ID} | cut -d: -f1)" 2>/dev/null || true; fi && \
+# ALSO remove the base `node` user (uid/gid 1000) unconditionally: the Dev
+# Container uid-remap (updateRemoteUserUID) refuses to remap `claude` onto the
+# host uid if that uid is already taken by another /etc/passwd entry. Since 1000
+# is the most common host uid and `node` is unused here (everything runs as
+# root-then-claude), leaving it would silently break devcontainer writes to the
+# bind-mounted workspace on a uid-1000 host. Removing it frees 1000 for the remap.
+RUN if id node >/dev/null 2>&1; then userdel -r node 2>/dev/null || true; fi && \
+    if getent group node >/dev/null 2>&1; then groupdel node 2>/dev/null || true; fi && \
+    if getent passwd ${USER_ID} >/dev/null 2>&1; then userdel -r "$(getent passwd ${USER_ID} | cut -d: -f1)" 2>/dev/null || true; fi && \
     if getent group ${USER_ID} >/dev/null 2>&1; then groupdel "$(getent group ${USER_ID} | cut -d: -f1)" 2>/dev/null || true; fi && \
     groupadd -g ${USER_ID} ${USER_NAME} && \
     useradd -m -u ${USER_ID} -g ${USER_ID} -s /bin/bash ${USER_NAME}
@@ -102,6 +110,14 @@ RUN cd /opt/toolchain && \
     npm ci --no-audit --no-fund && \
     npm cache clean --force
 ENV PATH="/opt/toolchain/node_modules/.bin:${PATH}"
+# claude-agent-acp (the ACP adapter, see start-acp.sh) is powered by
+# @anthropic-ai/claude-agent-sdk, which spawns a Claude Code binary. By default
+# the SDK would resolve its OWN bundled optionalDependency binary
+# (@anthropic-ai/claude-agent-sdk-linux-<arch>); point it at our already-pinned
+# `claude` instead so the ACP path reuses the same audited Claude Code (no second
+# Claude binary executed at runtime). Verified from ACP source (src/utils.ts):
+# CLAUDE_CODE_EXECUTABLE takes precedence over the SDK's resolved binary.
+ENV CLAUDE_CODE_EXECUTABLE="/opt/toolchain/node_modules/.bin/claude"
 # Verify the locked CLIs actually RUN on this base's Node (not just resolve on
 # PATH) — a pinned version may declare a Node engine this base doesn't satisfy
 # (e.g. pnpm 11 needs Node >=22.13; the base is node:22 which satisfies it). Running each `--version`
@@ -112,6 +128,9 @@ ENV PATH="/opt/toolchain/node_modules/.bin:${PATH}"
 # that block on stdin if launched without a client — they CANNOT be run here
 # without hanging the build, so only check presence; their actual startup is
 # verified at runtime via `claude mcp list`.
+# claude-agent-acp (the Zed/IDE ACP adapter) is likewise an stdio server: run
+# with no args it calls process.stdin.resume() and blocks forever (verified from
+# src/index.ts). Presence-only here; its handshake is verified at runtime.
 RUN claude --version && \
     openspec --version && \
     codegraph --help > /dev/null && \
@@ -121,7 +140,8 @@ RUN claude --version && \
     prettier --version > /dev/null && \
     eslint --version > /dev/null && \
     ts-node --version > /dev/null && \
-    command -v mcp-server-sequential-thinking perplexity-mcp > /dev/null
+    command -v mcp-server-sequential-thinking perplexity-mcp > /dev/null && \
+    command -v claude-agent-acp > /dev/null
 
 # ============================================================================
 # MCP Servers Cache Layer
@@ -242,6 +262,29 @@ echo "Starting Claude Code (Remote Control enabled) in $(pwd)..."\n\
 exec claude --dangerously-skip-permissions --remote-control "$@"\n\
 ' > /home/${USER_NAME}/start-claude.sh \
     && chmod +x /home/${USER_NAME}/start-claude.sh
+
+# ACP entrypoint for IDE use (Zed and other ACP clients), selected by run_acp.sh
+# via --entrypoint. claude-agent-acp speaks the Agent Client Protocol over stdio:
+# the editor launches this as a subprocess and exchanges JSON-RPC on stdin/stdout.
+# CRITICAL: stdout is the protocol channel — it must carry ONLY JSON-RPC. Every
+# diagnostic here goes to stderr (>&2) or the ACP session is corrupted. We do NOT
+# pass --remote-control/--dangerously-skip-permissions (those are `claude`-only
+# flags the acp bin ignores); in ACP mode tool-call permissions are gated by the
+# editor UI (a human approves), so this path is *less* permissive than the claude
+# entrypoint (see SECURITY.md). The same HOME-copy as start-claude.sh runs so the
+# baked agent state (config, MCP, opsx) is present under the writable runtime HOME.
+RUN echo '#!/bin/bash\n\
+set -e\n\
+# stdout is reserved for ACP JSON-RPC — send all diagnostics to stderr.\n\
+export HOME="${HOME:-/home/agent}"\n\
+if [ "$HOME" != "/home/claude" ] && [ ! -e "$HOME/.claude.json" ]; then\n\
+  mkdir -p "$HOME"\n\
+  cp -a /home/claude/. "$HOME/" 2>/dev/null || true\n\
+fi\n\
+echo "Starting claude-agent-acp (ACP stdio) in $(pwd)..." >&2\n\
+exec claude-agent-acp "$@"\n\
+' > /home/${USER_NAME}/start-acp.sh \
+    && chmod +x /home/${USER_NAME}/start-acp.sh
 
 # Make the baked HOME world-readable so the runtime --user (a different uid than
 # the build user) can copy it into its writable HOME (see start-claude.sh).
