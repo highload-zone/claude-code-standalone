@@ -56,23 +56,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build (and push by digest on non-PR)
-        id: build
-        uses: docker/build-push-action@v6
+      # Auto-retry: the native ARM runner intermittently terminates the job during
+      # base-image pull/push (transient infra, not a build error). nick-fields/retry
+      # re-runs the whole `docker buildx build` (pull+build+push) up to 3 times.
+      # PR: build-only verification (type=cacheonly, no push).
+      # push/tag: push by digest; the manifest is assembled in the merge job.
+      - name: Build (with retry; push by digest on non-PR)
+        uses: nick-fields/retry@v3
         with:
-          context: .
-          platforms: ${{ matrix.platform }}
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
-          # On PR: load=false, push=false → build-only verification.
-          # On push/tag: push by digest (manifest assembled in the merge job).
-          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, env.IMAGE_NAME) || 'type=cacheonly' }}
+          timeout_minutes: 40
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            docker buildx build \
+              --platform "${{ matrix.platform }}" \
+              --cache-from "type=gha,scope=${{ matrix.arch }}" \
+              --cache-to "type=gha,mode=max,scope=${{ matrix.arch }}" \
+              --metadata-file "/tmp/meta-${{ matrix.arch }}.json" \
+              ${{ github.event_name != 'pull_request' && format('--output type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, env.IMAGE_NAME) || '--output type=cacheonly' }} \
+              .
 
       - name: Export digest
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
+          digest="$(jq -r '."containerimage.digest"' "/tmp/meta-${{ matrix.arch }}.json")"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
