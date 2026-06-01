@@ -84,7 +84,11 @@ Node 22:
 docker run --rm -v "$PWD/tools:/w" -w /w node:22-trixie-slim npm install --package-lock-only
 ```
 
-## Run
+## Run — two modes
+
+The container ships two complementary modes:
+
+### Read-only mode (analysis / audit) — `run_claude.sh`
 
 ```bash
 ./run_claude.sh                 # interactive Claude Code in the container
@@ -93,8 +97,24 @@ docker run --rm -v "$PWD/tools:/w" -w /w node:22-trixie-slim npm install --packa
 ./run-diagnostics.sh            # MCP server diagnostics
 ```
 
-`run_claude.sh` mounts the current directory read-only at `/workspace/input` and `./reports`
-read-write at `/workspace/output`.
+Mounts the current directory **read-only** at `/workspace/input` and `./reports` read-write at
+`/workspace/output`. Claude can read your code and write reports/patches to `./reports`, but cannot
+modify the project or run git. Ideal for security review, code review, doc generation, and analyzing
+**untrusted** code. The agent starts with Remote Control enabled (see SECURITY.md).
+
+### Read-write dev mode (autonomous agent) — `run_claude_dev.sh`
+
+```bash
+./build-dev.sh                            # build the dev image under your uid (once)
+export DEPLOY_KEY=/path/to/repo_deploy_key  # optional: scoped key to enable git push
+cd /path/to/your/repo && /path/to/run_claude_dev.sh
+```
+
+Mounts the project **read-write** so Claude can edit, commit, and (with a scoped deploy key) push.
+This is a **fully autonomous agent with elevated risk** — use only on **trusted projects**. Push
+uses a scoped read-only-mounted deploy key (not ssh-agent forwarding), so the agent can push only to
+that repo and cannot ssh elsewhere. Project git hooks are disabled inside the container. See the
+"Dev mode" section in [SECURITY.md](./SECURITY.md) for the full threat model.
 
 ## Security disclosures
 

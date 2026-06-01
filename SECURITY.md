@@ -36,17 +36,59 @@ repository.
 - Vulnerabilities in third-party MCP servers, RTK, CodeGraph, caveman, or npm dependencies
   (report upstream to their maintainers)
 
+## Threat model (host assumptions)
+
+This image is expected to run on a host where the **Docker daemon runs as root** and the operator
+may be root. Consequently:
+
+- **On a root-Docker host, `docker run` is equivalent to host root.** The wrapper scripts
+  (`run_claude.sh`, `run_claude_dev.sh`, `debug-shell.sh`) are **NOT a security boundary against a
+  hostile operator** — anyone who can run Docker can ignore them and mount `/`, add capabilities,
+  or pass `--privileged`. The scripts' guard checks (refusing `--privileged`, `--pid=host`,
+  `docker.sock`, uid 0, etc.) only catch **accidental misconfiguration**, not a deliberate operator.
+- **Required invariants for the hardening to hold** (operator's responsibility): never mount
+  `/var/run/docker.sock`, never use `--privileged` / `--cap-add` / `--pid=host` / `--network=host`,
+  never `--user root`, never mount sensitive host paths. The provided scripts already satisfy these.
+- **Residual escape vectors not addressed by the image:** kernel LPE from an unprivileged container
+  (mitigate by patching the host kernel) and operator bypass (out of the image's control).
+
 ## Known limitations (by design)
 
-- **The image ENTRYPOINT is permissive.** Hardening lives in the wrapper scripts. Running the image
-  with a bare `docker run` (no wrapper) bypasses all container-level protections. Always use
-  `run_claude.sh` / `debug-shell.sh`.
+- **The image ENTRYPOINT is permissive** (`--dangerously-skip-permissions --remote-control`). The
+  container boundary is the perimeter; in-app permission prompts are disabled. A bare `docker run`
+  without a wrapper still has no host-level hardening. Always use the wrapper scripts.
+- **Remote Control opens an outbound control channel.** The entrypoint enables `--remote-control` by
+  default; this is an outbound connection to the Remote Control service. Disable it (override the
+  entrypoint / command) if your environment forbids that channel.
 - **Outbound network is allowed.** Bridge networking blocks the host network but not the internet.
-  The `context7` and `perplexity` MCP servers transmit data (including code context) to third
-  parties. Remove them from `mcp-servers.json` if your threat model forbids this egress.
-- **Third-party trust.** RTK's `PreToolUse` hook can see and rewrite every Bash command;
-  CodeGraph ships an opaque vendored binary. Both are version- and checksum-pinned, but auditing
-  them is left to the operator.
+  `context7` and `perplexity` MCP servers transmit data (including code context) to third parties.
+  On a root host this is an exfiltration channel under prompt injection — restrict egress at the
+  Docker-network/daemon level (cap-drop=ALL prevents in-container iptables) or remove those MCP
+  servers from `mcp-servers.json`.
+- **Prompt injection.** With `--dangerously-skip-permissions`, any analyzed file is executable
+  instructions for the autonomous agent. In read-only mode the blast radius is bounded by the ro
+  mount + cap-drop, but egress can still exfiltrate read code. **In dev mode it is not bounded** —
+  see below.
+- **Third-party trust.** RTK's `PreToolUse` hook rewrites every Bash command (compromise = injection
+  into every shell call); CodeGraph ships an opaque vendored binary. Both are version/checksum
+  pinned, but auditing them is the operator's responsibility.
+
+## Dev mode (`run_claude_dev.sh`) — elevated risk
+
+The read-write dev mode mounts the project `rw`, runs the agent autonomously, and (optionally) gives
+it a scoped git push credential. **Residual risk is Medium** with a scoped deploy key (the default
+recommendation), and **High** if you substitute ssh-agent forwarding (a forwarded agent can
+authenticate to *any* SSH host, not just `git push` — enabling pivot beyond the repo). Guardrails
+built into dev mode:
+
+- **Scoped deploy key** (read-only mounted, `IdentitiesOnly=yes`) instead of agent forwarding — the
+  agent can push only to that one repo and cannot ssh elsewhere. Set via `DEPLOY_KEY=/path/to/key`.
+- **Project git hooks are disabled** in the container (`core.hooksPath=/dev/null`) so an injected
+  `.git/hooks` script does not execute on git operations.
+- **Footgun guards** (refuse `--privileged`/`docker.sock`/uid 0) as above.
+
+Use dev mode only on **trusted projects**. Even with the deploy key, a prompt-injected agent can
+modify project files / CI configs (rw) and push to the scoped repo — review what it commits.
 
 ## Secrets
 

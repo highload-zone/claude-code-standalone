@@ -10,7 +10,12 @@ ARG USER_NAME=claude
 ARG RTK_VERSION=v0.42.0
 
 # Create non-root user with specific UID/GID
-RUN groupadd -g ${USER_ID} ${USER_NAME} && \
+# Free the requested UID/GID if the base image already uses it (node:22 ships a
+# `node` user at uid/gid 1000) so the image can be built with --build-arg
+# USER_ID=$(id -u) for the read-write dev mode without a uid clash.
+RUN if getent passwd ${USER_ID} >/dev/null 2>&1; then userdel -r "$(getent passwd ${USER_ID} | cut -d: -f1)" 2>/dev/null || true; fi && \
+    if getent group ${USER_ID} >/dev/null 2>&1; then groupdel "$(getent group ${USER_ID} | cut -d: -f1)" 2>/dev/null || true; fi && \
+    groupadd -g ${USER_ID} ${USER_NAME} && \
     useradd -m -u ${USER_ID} -g ${USER_ID} -s /bin/bash ${USER_NAME}
 
 # Install system dependencies with security hardening
@@ -250,13 +255,16 @@ RUN rtk init -g --auto-patch
 # future failure stays visible.
 RUN npx -y github:JuliusBrussee/caveman#v1.8.2 --non-interactive --only claude --no-mcp-shrink
 
-# Create simple startup script for runtime
+# Create simple startup script for runtime.
+# --remote-control: start with Remote Control enabled by default (per project
+#   requirement) so the in-container agent can be driven remotely.
+# --dangerously-skip-permissions: the container boundary is the perimeter (see
+#   SECURITY.md). NOTE: Remote Control opens an outbound control channel — covered
+#   in the threat model.
 RUN echo '#!/bin/bash\n\
 set -e\n\
-echo "Starting Claude Code..."\n\
-# Use environment variable for API key\n\
-# Run Claude Code with dangerous skip permissions for jailfree mode\n\
-exec claude --dangerously-skip-permissions "$@"\n\
+echo "Starting Claude Code (Remote Control enabled)..."\n\
+exec claude --dangerously-skip-permissions --remote-control "$@"\n\
 ' > /home/${USER_NAME}/start-claude.sh \
     && chmod +x /home/${USER_NAME}/start-claude.sh
 

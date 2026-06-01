@@ -3,6 +3,17 @@
 # Interactive Claude Code Shell
 set -e
 
+# Footgun guards — catch ACCIDENTAL misconfig only. On a root-Docker host this is
+# NOT a boundary against a hostile operator (docker run == host root); see SECURITY.md.
+for a in "$@"; do
+  case "$a" in
+    --privileged|--pid=host|--network=host|--cap-add*|*docker.sock*)
+      echo "❌ Refusing: '$a' weakens isolation and is not accepted by this script." >&2
+      exit 1;;
+  esac
+done
+[ "$(id -u)" -eq 0 ] && { echo "❌ Refusing to run as root on the host — use your normal user." >&2; exit 1; }
+
 # Collect all arguments to pass to Claude
 CLAUDE_ARGS=("$@")
 
