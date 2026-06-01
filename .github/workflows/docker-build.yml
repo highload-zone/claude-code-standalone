@@ -1,9 +1,14 @@
 name: Docker build
 
-# Builds the container image to verify the Dockerfile + pinned toolchain.
-# No secrets are used: `docker build` does not consume any token (all secrets
-# are runtime-only, passed via .env at `docker run`). The image is NOT pushed
-# to any registry here.
+# Builds the container image for every supported architecture via a matrix, to
+# verify the Dockerfile + pinned per-arch toolchain. No secrets are used —
+# `docker build` is token-free; all secrets are runtime-only. Images are NOT
+# pushed to any registry here (build-verification only).
+#
+# Supported Linux archs are limited by RTK, which ships only x86_64 (musl) and
+# aarch64 (gnu) — so the matrix is amd64 + arm64. Each runs natively on its own
+# GitHub-hosted runner (no QEMU emulation). If arm64 runners are unavailable for
+# this repo, switch the arm64 leg to ubuntu-latest + docker/setup-qemu-action.
 
 on:
   push:
@@ -17,7 +22,18 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,11 +41,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Build image (${{ matrix.platform }})
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: ${{ matrix.platform }}
           push: false
-          tags: claude-code-standalone:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: claude-code-standalone:ci-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}

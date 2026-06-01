@@ -31,21 +31,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Remove network tools that could be used for reconnaissance (but keep essential shells)
     && rm -f /usr/bin/nc /usr/bin/netcat /bin/netstat /usr/bin/ss || true
 
-# Install git-delta from GitHub releases (sha256-pinned for supply-chain integrity)
+# TARGETARCH is provided automatically by BuildKit/buildx (amd64 | arm64). Used to
+# select per-architecture GitHub-release binaries for multi-arch builds.
+ARG TARGETARCH
+
+# Install git-delta from GitHub releases (per-arch, sha256-pinned). The .deb suffix
+# matches TARGETARCH directly (amd64 / arm64).
 RUN DELTA_VERSION="0.19.2" && \
-    DELTA_SHA256="ea4f0222950ee750a3d38dd80d03bce4cee07a3f63928fc47548383bcaf23093" && \
-    curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_amd64.deb" -o /tmp/git-delta.deb && \
+    case "$TARGETARCH" in \
+      amd64) DELTA_SHA256="ea4f0222950ee750a3d38dd80d03bce4cee07a3f63928fc47548383bcaf23093";; \
+      arm64) DELTA_SHA256="0edc36cf514f1bd84becac3e94ee8ae9f8818c6a1f99f7b2ee67b362afa253d3";; \
+      *) echo "unsupported TARGETARCH for git-delta: $TARGETARCH" >&2; exit 1;; \
+    esac && \
+    curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${TARGETARCH}.deb" -o /tmp/git-delta.deb && \
     echo "${DELTA_SHA256}  /tmp/git-delta.deb" | sha256sum -c - && \
     dpkg -i /tmp/git-delta.deb && \
     rm /tmp/git-delta.deb
 
-# Install RTK (Rust Token Killer) — static musl binary from GitHub releases.
-# Pinned version + sha256 (supply-chain integrity). RTK_SHA256 matches the default
-# RTK_VERSION=v0.42.0; if you bump RTK_VERSION via --build-arg you MUST update
-# RTK_SHA256 too (the checksum verification will fail otherwise — by design).
-# The archive contains a single static binary `rtk`; placed in /usr/local/bin.
-ARG RTK_SHA256=cdd4f87ac97ce958f71b53a991880d6adcc41cc5bca1044175a64630980152be
-RUN curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/rtk-x86_64-unknown-linux-musl.tar.gz" -o /tmp/rtk.tar.gz && \
+# Install RTK (Rust Token Killer) from GitHub releases — per-arch, sha256-pinned.
+# RTK ships only two Linux targets: x86_64 (musl) and aarch64 (gnu); other Linux
+# archs are not available. If you bump RTK_VERSION you MUST refresh both sha256
+# values (the checksum verification fails otherwise — by design). Each archive
+# contains a single binary `rtk` placed in /usr/local/bin.
+RUN case "$TARGETARCH" in \
+      amd64) RTK_ASSET="rtk-x86_64-unknown-linux-musl.tar.gz"; \
+             RTK_SHA256="cdd4f87ac97ce958f71b53a991880d6adcc41cc5bca1044175a64630980152be";; \
+      arm64) RTK_ASSET="rtk-aarch64-unknown-linux-gnu.tar.gz"; \
+             RTK_SHA256="62bb749df1ed64f09149998c31de864932f047a1be4e0f882a8ceada849e0871";; \
+      *) echo "unsupported TARGETARCH for RTK: $TARGETARCH" >&2; exit 1;; \
+    esac && \
+    curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/${RTK_ASSET}" -o /tmp/rtk.tar.gz && \
     echo "${RTK_SHA256}  /tmp/rtk.tar.gz" | sha256sum -c - && \
     tar -xzf /tmp/rtk.tar.gz -C /tmp && \
     mv /tmp/rtk /usr/local/bin/rtk && \
