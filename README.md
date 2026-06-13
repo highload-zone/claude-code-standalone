@@ -7,27 +7,106 @@ curated set of MCP servers.
 
 ## Getting started
 
-Copy-paste into your local shell (needs Docker and a Claude Code OAuth token — `claude setup-token`):
+The prebuilt multi-arch image is published to GHCR — **you don't clone this repo or build anything**.
+Three steps: save your token once, pull the image, run it over any project. No scripts required.
+
+**Prerequisites**
+
+- Docker, and a Claude Code OAuth token (`claude setup-token`).
+- The GHCR package must be **public** for an anonymous `docker pull`. One-time, by the repo owner:
+  *GitHub → repo → Packages → `claude-code-standalone` → Package settings → Change visibility → Public*.
+  If it stays private, run `docker login ghcr.io` (with a PAT that has `read:packages`) first.
+
+**1. Save your token once (used from any project)**
 
 ```bash
-git clone https://github.com/highload-zone/claude-code-standalone.git
-cd claude-code-standalone
-cp .env.example .env          # then put your CLAUDE_CODE_OAUTH_TOKEN in .env (the only required var)
-./build.sh                    # build the claude-code-standalone:latest image
-./run_claude.sh               # run the agent over the current directory (mounted read-write)
+mkdir -p ~/.config/claude-standalone
+curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalone/main/.env.example \
+  -o ~/.config/claude-standalone/claude.env
+# Edit the file: set CLAUDE_CODE_OAUTH_TOKEN (required). Context7 / Perplexity keys are optional.
 ```
 
-Prefer the prebuilt multi-arch image over a local build? Pull it from GHCR instead of `./build.sh`:
+**2. Pull the image**
 
 ```bash
-export CLAUDE_IMAGE=ghcr.io/highload-zone/claude-code-standalone:latest
-docker pull "$CLAUDE_IMAGE"
-./run_claude.sh               # run_claude.sh honours $CLAUDE_IMAGE
+docker pull ghcr.io/highload-zone/claude-code-standalone:latest
 ```
 
-`run_claude.sh` reads `.env` from the current directory and mounts `$(pwd)` at `/workspace`; run it
-from the project you want the agent to work on. See [Requirements](#requirements), [Setup](#setup),
-and [Run](#run) below for the full flow and `git push` (deploy-key) setup.
+**3. Run the agent over your project**
+
+From the project directory you want the agent to work on (it is mounted **read-write**):
+
+```bash
+docker run -it --rm \
+  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=100 --network=bridge \
+  --user "$(id -u):$(id -g)" \
+  --tmpfs /home/agent:exec,mode=1777,size=512m -e HOME=/home/agent \
+  --tmpfs /tmp:noexec,nosuid,size=100m \
+  -v "$PWD:/workspace:rw" -w /workspace \
+  --env-file ~/.config/claude-standalone/claude.env \
+  ghcr.io/highload-zone/claude-code-standalone:latest
+```
+
+> **Why the command is long — and don't shorten it.** The image is self-contained (entrypoint, tools,
+> config, MCP servers are all baked in), but the container's *protection* — `--cap-drop=ALL`, the
+> non-root `--user`, the `noexec` tmpfs scratch, network isolation — are **`docker run` flags, not
+> something an image can carry**: Docker's security model puts these in the operator's hands by
+> design. `$(id -u):$(id -g)` (so the agent owns your files) and `$PWD` (which project to mount) are
+> likewise resolved on the host at run time. Dropping the hardening flags to make the command shorter
+> removes exactly the boundary this image exists to provide. To avoid retyping, wrap it in a shell
+> function (below) — that's a wrapper, named honestly, not a shorter command.
+
+### One command from any directory (shell function)
+
+Add to `~/.bashrc` / `~/.zshrc` (a global shell setting, not a script committed to a repo):
+
+```bash
+claude-box() {
+  docker run -it --rm \
+    --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=100 --network=bridge \
+    --user "$(id -u):$(id -g)" \
+    --tmpfs /home/agent:exec,mode=1777,size=512m -e HOME=/home/agent \
+    --tmpfs /tmp:noexec,nosuid,size=100m \
+    -v "$PWD:/workspace:rw" -w /workspace \
+    --env-file ~/.config/claude-standalone/claude.env \
+    ghcr.io/highload-zone/claude-code-standalone:latest "$@"
+}
+```
+
+Then just `claude-box` from any project. (The repo also ships `run_claude.sh`, which is the same
+command plus `git`-identity/deploy-key handling — use it if you cloned the repo.)
+
+### Commits as you, and `git push`
+
+The bare command lets the agent edit and commit locally with the container's default git identity.
+To attribute commits to **you** and/or enable `git push`, add to the `docker run` (or the function):
+
+```bash
+  -e GIT_AUTHOR_NAME="$(git config user.name)"   -e GIT_COMMITTER_NAME="$(git config user.name)" \
+  -e GIT_AUTHOR_EMAIL="$(git config user.email)" -e GIT_COMMITTER_EMAIL="$(git config user.email)" \
+  # for push, mount a SCOPED, read-only deploy key (see SECURITY.md):
+  -v /path/to/repo_deploy_key:/home/agent/deploy_key:ro \
+  -e GIT_SSH_COMMAND="ssh -i /home/agent/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+```
+
+### Token in the system keyring (optional)
+
+`--env-file` keeps the token in a plaintext file. To hold it in the OS keyring and inject it at run
+time instead (this is, honestly, a thin wrapper around `docker run` — name it as such), drop
+`--env-file` and add `-e CLAUDE_CODE_OAUTH_TOKEN=...`:
+
+```bash
+# Linux (libsecret): store once, then look it up in the run command
+secret-tool store --label='Claude Code' service claude-code key oauth
+  -e CLAUDE_CODE_OAUTH_TOKEN="$(secret-tool lookup service claude-code key oauth)"
+
+# macOS (Keychain): store once, then look it up
+security add-generic-password -s claude-code -a oauth -w
+  -e CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s claude-code -a oauth -w)"
+```
+
+See [Requirements](#requirements), [Setup](#setup), and [Run](#run) below for building locally and
+the script-based flow.
 
 ## Why
 
