@@ -5,6 +5,30 @@ as an autonomous agent over your project. Built on Node.js 22 LTS (Debian Trixie
 multi-arch (linux/amd64 + linux/arm64), with a pinned, lockfile-controlled CLI toolchain and a
 curated set of MCP servers.
 
+## Getting started
+
+Copy-paste into your local shell (needs Docker and a Claude Code OAuth token — `claude setup-token`):
+
+```bash
+git clone https://github.com/highload-zone/claude-code-standalone.git
+cd claude-code-standalone
+cp .env.example .env          # then put your CLAUDE_CODE_OAUTH_TOKEN in .env (the only required var)
+./build.sh                    # build the claude-code-standalone:latest image
+./run_claude.sh               # run the agent over the current directory (mounted read-write)
+```
+
+Prefer the prebuilt multi-arch image over a local build? Pull it from GHCR instead of `./build.sh`:
+
+```bash
+export CLAUDE_IMAGE=ghcr.io/highload-zone/claude-code-standalone:latest
+docker pull "$CLAUDE_IMAGE"
+./run_claude.sh               # run_claude.sh honours $CLAUDE_IMAGE
+```
+
+`run_claude.sh` reads `.env` from the current directory and mounts `$(pwd)` at `/workspace`; run it
+from the project you want the agent to work on. See [Requirements](#requirements), [Setup](#setup),
+and [Run](#run) below for the full flow and `git push` (deploy-key) setup.
+
 ## Why
 
 Running an autonomous coding agent with broad permissions directly on your host is risky. This image
@@ -57,15 +81,15 @@ Base: `node:22-trixie-slim` (Node 22 LTS, Debian 13 / glibc 2.41). Multi-arch (a
 Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
 integrity, exact versions):
 
-- `@anthropic-ai/claude-code` (2.1.159), `@fission-ai/openspec` (1.3.1)
-- `@agentclientprotocol/claude-agent-acp` (0.39.0) — ACP adapter for IDE use (Zed); reuses
+- `@anthropic-ai/claude-code` (2.1.177), `@fission-ai/openspec` (1.4.1)
+- `@agentclientprotocol/claude-agent-acp` (0.44.0) — ACP adapter for IDE use (Zed); reuses
   the pinned `claude` binary via `CLAUDE_CODE_EXECUTABLE`
-- `@colbymchenry/codegraph` (0.9.8, MCP) wrapped by `caveman-shrink` (0.1.0)
+- `@colbymchenry/codegraph` (1.0.0, MCP) wrapped by `caveman-shrink` (0.1.0)
 - MCP servers: `sequential-thinking`, `context7` (HTTP), `perplexity`
-- caveman skill (plugin, tag `v1.8.2`)
-- Dev tools: `pnpm` 11.5.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.8.3, `eslint` 10.4.1
+- caveman skill (plugin, tag `v1.9.0`)
+- Dev tools: `pnpm` 11.6.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.8.4, `eslint` 10.5.0
 
-GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.42.0), `git-delta` (0.19.2).
+GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.42.4), `git-delta` (0.19.2).
 CLI utilities: `jq`, `ripgrep`, `fd`, `tree`, `fzf`, `mc`, `gnupg`.
 
 See [CLAUDE.md](./CLAUDE.md) for the full architecture and per-component details.
