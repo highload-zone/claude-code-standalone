@@ -54,12 +54,14 @@ may be root. Consequently:
 
 ## Known limitations (by design)
 
-- **The image ENTRYPOINT is permissive** (`--dangerously-skip-permissions --remote-control`). The
+- **The image ENTRYPOINT is permissive** (`--dangerously-skip-permissions`). The
   container boundary is the perimeter; in-app permission prompts are disabled. A bare `docker run`
   without a wrapper still has no host-level hardening. Always use the wrapper scripts.
-- **Remote Control opens an outbound control channel.** The entrypoint enables `--remote-control` by
-  default; this is an outbound connection to the Remote Control service. Disable it (override the
-  entrypoint / command) if your environment forbids that channel.
+- **Remote Control is opt-in and off by default.** Set `CLAUDE_REMOTE_CONTROL=1` to add
+  `--remote-control`, which opens an outbound connection to the Remote Control service. It also
+  requires a **full-scope login token** (`claude auth login`): the long-lived `CLAUDE_CODE_OAUTH_TOKEN`
+  / `claude setup-token` this image normally uses is inference-only, so Remote Control stays disabled
+  with it even if the flag is set. Leave the env var unset if your environment forbids that channel.
 - **Outbound network is allowed.** Bridge networking blocks the host network but not the internet.
   `context7` and `perplexity` MCP servers transmit data (including code context) to third parties.
   On a root host this is an exfiltration channel under prompt injection — restrict egress at the

@@ -3,5 +3,10 @@
     "allow": [],
     "deny": [],
     "ask": []
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "/usr/local/bin/claude-statusline.sh",
+    "padding": 0
   }
 }

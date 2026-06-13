@@ -172,6 +172,11 @@ COPY --chown=${USER_NAME}:${USER_NAME} claude-config.json /home/${USER_NAME}/.cl
 # COPY --chown creates the .claude dir owned by the user (a root `mkdir` here would
 # leave it root-owned and break the later openspec/rtk init under USER claude).
 COPY --chown=${USER_NAME}:${USER_NAME} settings.local.json /home/${USER_NAME}/.claude/settings.local.json
+# Statusline command for Claude Code (compact line: dir, git, model, context, rate
+# limits). Installed at a fixed, HOME-independent path so settings.local.json's
+# statusLine.command works regardless of the runtime HOME relocation. Deps (jq, git,
+# awk, date, grep) are all present in the image.
+COPY --chmod=0755 statusline-command.sh /usr/local/bin/claude-statusline.sh
 
 # Switch to non-root user for the agent-init layers (git config, RTK, caveman).
 USER ${USER_NAME}
@@ -242,11 +247,14 @@ RUN rtk init -g --auto-patch
 RUN npx -y github:JuliusBrussee/caveman#v1.9.0 --non-interactive --only claude --no-mcp-shrink
 
 # Create simple startup script for runtime.
-# --remote-control: start with Remote Control enabled by default (per project
-#   requirement) so the in-container agent can be driven remotely.
+# --remote-control: OPT-IN via CLAUDE_REMOTE_CONTROL=1 (off by default). Remote
+#   Control requires a full-scope login token (`claude auth login`); the
+#   long-lived CLAUDE_CODE_OAUTH_TOKEN / `claude setup-token` this image uses is
+#   inference-only, so RC stays disabled with it. The flag is added only when the
+#   env var is set, so it is never a dead default. See SECURITY.md.
 # --dangerously-skip-permissions: the container boundary is the perimeter (see
-#   SECURITY.md). NOTE: Remote Control opens an outbound control channel — covered
-#   in the threat model.
+#   SECURITY.md). NOTE: when enabled, Remote Control opens an outbound control
+#   channel — covered in the threat model.
 RUN echo '#!/bin/bash\n\
 set -e\n\
 # Runtime starts with --user $(id -u):$(id -g) to match host ownership of the rw\n\
@@ -258,8 +266,14 @@ if [ "$HOME" != "/home/claude" ] && [ ! -e "$HOME/.claude.json" ]; then\n\
   cp -a /home/claude/. "$HOME/" 2>/dev/null || true\n\
 fi\n\
 cd /workspace 2>/dev/null || cd "$HOME"\n\
-echo "Starting Claude Code (Remote Control enabled) in $(pwd)..."\n\
-exec claude --dangerously-skip-permissions --remote-control "$@"\n\
+RC_ARGS=""\n\
+if [ "${CLAUDE_REMOTE_CONTROL:-0}" = "1" ]; then\n\
+  RC_ARGS="--remote-control"\n\
+  echo "Starting Claude Code (Remote Control requested — needs a full-scope login token; see SECURITY.md) in $(pwd)..."\n\
+else\n\
+  echo "Starting Claude Code in $(pwd)..."\n\
+fi\n\
+exec claude --dangerously-skip-permissions $RC_ARGS "$@"\n\
 ' > /home/${USER_NAME}/start-claude.sh \
     && chmod +x /home/${USER_NAME}/start-claude.sh
 
