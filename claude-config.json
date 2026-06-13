@@ -6,12 +6,8 @@
   "autoConnectIde": false,
   "claudeInChromeDefaultEnabled": false,
   "showExpandedTodos": true,
-  "dangerouslySkipPermissions": true,
-  "autoAcceptPermissions": true,
   "autoTrustNewProjects": true,
   "suppressTrustPrompts": true,
-  "suppressPermissionPrompts": true,
-  "defaultPermissionMode": "accept",
   "customApiKeyResponses": {
     "approved": [],
     "rejected": []
@@ -29,7 +25,7 @@
         "allow": [
           "Bash(*)",
           "Edit(*)",
-          "Read(*)", 
+          "Read(*)",
           "Write(*)",
           "List(*)",
           "Glob(*)",
@@ -41,14 +37,11 @@
           "NotebookWrite(*)",
           "mcp__*"
         ],
-        "defaultMode": "acceptEdits",
         "additionalDirectories": ["/workspace/input", "/workspace/output", "/workspace/data", "/workspace/temp"]
       },
       "hasCompletedProjectOnboarding": true,
       "hasClaudeMdExternalIncludesApproved": false,
       "hasClaudeMdExternalIncludesWarningShown": false,
-      "autoAcceptAllTools": true,
-      "autoAcceptMcpTools": true,
       "history": [],
       "mcpContextUris": [],
       "mcpServers": {
@@ -56,9 +49,6 @@
       "enabledMcpjsonServers": [],
       "disabledMcpjsonServers": [],
       "hasTrustDialogAccepted": true,
-      "hasAllToolsApproved": true,
-      "autoAcceptEdits": true,
-      "skipConfirmationDialogs": true,
       "projectOnboardingSeenCount": 1,
       "thinkingMigrationComplete": true,
       "allowWebSearch": true,

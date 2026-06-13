@@ -172,6 +172,10 @@ COPY --chown=${USER_NAME}:${USER_NAME} claude-config.json /home/${USER_NAME}/.cl
 # COPY --chown creates the .claude dir owned by the user (a root `mkdir` here would
 # leave it root-owned and break the later openspec/rtk init under USER claude).
 COPY --chown=${USER_NAME}:${USER_NAME} settings.local.json /home/${USER_NAME}/.claude/settings.local.json
+# User-level settings.json: permission defaultMode "auto" + advisorModel. MUST be
+# user-home (~/.claude/settings.json) — Claude Code (v2.1.142+) ignores defaultMode
+# "auto" from project-scope settings, so this never goes to /workspace/.claude.
+COPY --chown=${USER_NAME}:${USER_NAME} settings.json /home/${USER_NAME}/.claude/settings.json
 # Statusline command for Claude Code (compact line: dir, git, model, context, rate
 # limits). Installed at a fixed, HOME-independent path so settings.local.json's
 # statusLine.command works regardless of the runtime HOME relocation. Deps (jq, git,
@@ -247,14 +251,18 @@ RUN rtk init -g --auto-patch
 RUN npx -y github:JuliusBrussee/caveman#v1.9.0 --non-interactive --only claude --no-mcp-shrink
 
 # Create simple startup script for runtime.
+# Permission mode: default is `auto` (set in ~/.claude/settings.json) — autonomous
+#   with a background classifier, NOT the old `--dangerously-skip-permissions`
+#   bypass. Auto mode engages only on the Anthropic API with a supported model; if
+#   unavailable it silently falls back to `default` (prompts). See SECURITY.md.
+# --dangerously-skip-permissions: OPT-IN via CLAUDE_BYPASS_PERMISSIONS=1 (off by
+#   default). Re-adds the full bypass for isolated/throwaway containers where you
+#   accept no in-app safety checks. The flag is added only when the env var is set,
+#   so it is never a dead default.
 # --remote-control: OPT-IN via CLAUDE_REMOTE_CONTROL=1 (off by default). Remote
 #   Control requires a full-scope login token (`claude auth login`); the
 #   long-lived CLAUDE_CODE_OAUTH_TOKEN / `claude setup-token` this image uses is
-#   inference-only, so RC stays disabled with it. The flag is added only when the
-#   env var is set, so it is never a dead default. See SECURITY.md.
-# --dangerously-skip-permissions: the container boundary is the perimeter (see
-#   SECURITY.md). NOTE: when enabled, Remote Control opens an outbound control
-#   channel — covered in the threat model.
+#   inference-only, so RC stays disabled with it.
 RUN echo '#!/bin/bash\n\
 set -e\n\
 # Runtime starts with --user $(id -u):$(id -g) to match host ownership of the rw\n\
@@ -266,14 +274,18 @@ if [ "$HOME" != "/home/claude" ] && [ ! -e "$HOME/.claude.json" ]; then\n\
   cp -a /home/claude/. "$HOME/" 2>/dev/null || true\n\
 fi\n\
 cd /workspace 2>/dev/null || cd "$HOME"\n\
-RC_ARGS=""\n\
-if [ "${CLAUDE_REMOTE_CONTROL:-0}" = "1" ]; then\n\
-  RC_ARGS="--remote-control"\n\
-  echo "Starting Claude Code (Remote Control requested — needs a full-scope login token; see SECURITY.md) in $(pwd)..."\n\
-else\n\
-  echo "Starting Claude Code in $(pwd)..."\n\
+EXTRA_ARGS=""\n\
+mode_msg="permission mode: auto (default; falls back to default mode if auto is unavailable)"\n\
+if [ "${CLAUDE_BYPASS_PERMISSIONS:-0}" = "1" ]; then\n\
+  EXTRA_ARGS="$EXTRA_ARGS --dangerously-skip-permissions"\n\
+  mode_msg="permission mode: bypass (CLAUDE_BYPASS_PERMISSIONS=1 — no in-app safety checks)"\n\
 fi\n\
-exec claude --dangerously-skip-permissions $RC_ARGS "$@"\n\
+if [ "${CLAUDE_REMOTE_CONTROL:-0}" = "1" ]; then\n\
+  EXTRA_ARGS="$EXTRA_ARGS --remote-control"\n\
+  mode_msg="$mode_msg; Remote Control requested (needs a full-scope login token; see SECURITY.md)"\n\
+fi\n\
+echo "Starting Claude Code in $(pwd) — $mode_msg..."\n\
+exec claude $EXTRA_ARGS "$@"\n\
 ' > /home/${USER_NAME}/start-claude.sh \
     && chmod +x /home/${USER_NAME}/start-claude.sh
 
