@@ -2,5 +2,12 @@
   "permissions": {
     "defaultMode": "auto"
   },
-  "advisorModel": "opus"
+  "advisorModel": "opus",
+  "autoUpdates": false,
+  "tui": "default",
+  "statusLine": {
+    "type": "command",
+    "command": "/usr/local/bin/claude-statusline.sh",
+    "padding": 0
+  }
 }
