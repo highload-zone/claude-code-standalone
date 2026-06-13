@@ -45,8 +45,8 @@ The container implements defense-in-depth:
 
 Claude Code configuration is pre-configured in the container:
 - `claude-config.json` - Main Claude configuration with all permissions enabled
-- `settings.local.json` - Local settings copied to `~/.claude/settings.local.json` (statusLine + permissions)
-- `settings.json` - User settings copied to `~/.claude/settings.json`: `permissions.defaultMode: "auto"` + `advisorModel: "opus"` (auto mode must be in user-home, not project scope)
+- `settings.local.json` - Local settings copied to `~/.claude/settings.local.json` (permissions allow/deny/ask)
+- `settings.json` - User settings copied to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `advisorModel: "opus"`, `autoUpdates: false`, `tui: "default"` (suppresses the fullscreen-renderer prompt), and the `statusLine` (must be in settings.json, not settings.local.json — that's where Claude Code reads it). Auto mode must be in user-home, not project scope
 - All permissions are auto-accepted for jailfree operation mode
 
 ## Common Commands
@@ -399,8 +399,8 @@ Inside the debug shell, you can run diagnostics manually:
 - `tools/package.json` - Pinned npm CLI toolchain (claude-code, openspec, codegraph, caveman-shrink, MCP servers, dev tools) — exact versions, single source of truth
 - `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:22 after editing package.json
 - `claude-config.json` - Claude Code configuration with all permissions
-- `settings.local.json` - Local Claude settings; also wires the `statusLine` to `/usr/local/bin/claude-statusline.sh`
-- `settings.json` - User Claude settings baked to `~/.claude/settings.json`: `permissions.defaultMode: "auto"` + `advisorModel: "opus"`
+- `settings.local.json` - Local Claude settings (permissions allow/deny/ask)
+- `settings.json` - User Claude settings baked to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `advisorModel: "opus"`, `autoUpdates: false`, `tui: "default"`, and the `statusLine` (wired to `/usr/local/bin/claude-statusline.sh`)
 - `statusline-command.sh` - Claude Code statusLine script (compact line: dir, git branch/dirty, model, duration, context %, 5h/7d rate limits); baked to `/usr/local/bin/claude-statusline.sh` (fixed, HOME-independent path). Deps (jq, git, awk, date, grep) are all present in the image
 - `mcp-servers.json` - Base MCP server configurations (always installed)
 - `mcp-servers-optional.json` - Optional MCP servers (require API keys)
