@@ -13,10 +13,10 @@ This is a security-hardened Docker container that runs Claude Code with pre-inst
 The container is built on Node.js 22 (LTS) with the following layers:
 
 1. **Base System** - Debian Trixie (glibc 2.41) with hardened security settings
-2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.159), OpenSpec (1.3.1), CodeGraph (0.9.8), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.5.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.8.3, eslint 10.4.1)
+2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.177), OpenSpec (1.4.1), CodeGraph (1.0.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.6.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.8.4, eslint 10.5.0)
 3. **OpenSpec** - initialized into `/workspace` at build time with telemetry disabled via `OPENSPEC_TELEMETRY=0`
 4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified); `rtk init -g --auto-patch` installs a Claude Code PreToolUse hook that rewrites Bash commands through `rtk`
-5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.8.2`
+5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.9.0`
 6. **CodeGraph** - Code knowledge graph exposed as an MCP server (`@colbymchenry/codegraph`); ships a vendored prebuilt binary, runtime GitHub download disabled via `CODEGRAPH_NO_DOWNLOAD=1`
 7. **MCP Servers** - Configured from MCP JSON configs; all stdio servers use pre-installed bins (no runtime `npx`)
 
@@ -209,9 +209,9 @@ gate runs each dev tool's `--version` to catch an incompatible engine (this is h
 pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 
 **Build-time variables** (set during `docker build`):
-- `RTK_VERSION` - Git tag of the RTK release to download (default: `v0.42.0`); RTK is a
+- `RTK_VERSION` - Git tag of the RTK release to download (default: `v0.42.4`); RTK is a
   GitHub-release binary, not npm. Override directly: `docker build --build-arg RTK_VERSION=...`
-- `RTK_SHA256` - sha256 of the RTK tarball (default matches `v0.42.0`); bump together with
+- `RTK_SHA256` - sha256 of the RTK tarball (default matches `v0.42.4`); bump together with
   `RTK_VERSION` or the integrity check fails by design
 
 **Runtime variables** (set when running container):
@@ -289,19 +289,19 @@ Two extra entrypoints exist beside the autonomous `run_claude.sh`; they share th
   - Telemetry is opt-out only via the `OPENSPEC_TELEMETRY=0` env var (no `telemetry.enabled` config key exists); set as baked-in ENV, covering build and runtime
   - Source: https://github.com/Fission-AI/OpenSpec
 - **RTK** - Rust Token Killer; CLI proxy that filters/compresses command output to cut LLM token usage (`rtk` binary)
-  - Static musl binary downloaded from GitHub releases into `/usr/local/bin`; pinned via `RTK_VERSION` build arg (default `v0.42.0`), no Rust toolchain needed
+  - Static musl binary downloaded from GitHub releases into `/usr/local/bin`; pinned via `RTK_VERSION` build arg (default `v0.42.4`), no Rust toolchain needed
   - `rtk init -g --auto-patch` runs at build time (as the `claude` user): installs a **Claude Code PreToolUse hook** that transparently rewrites Bash commands (`git status` → `rtk git status`), writes `~/RTK.md`, and patches `~/.bashrc`
   - `-g` targets Claude Code (there is no `--agent claude`); `--auto-patch` makes init non-interactive
   - Runtime needs only the `rtk` binary in PATH + the hook; no daemon. Optional config at `~/.config/rtk/config.toml`
   - Source: https://github.com/rtk-ai/rtk
 - **Caveman** - Output-compression skill for Claude Code (terse "caveman-speak"), reduces output tokens (~65%)
-  - Installed at build time via `npx -y github:JuliusBrussee/caveman#v1.8.2 --non-interactive --only claude` (as the `claude` user; requires Node.js >= 18)
+  - Installed at build time via `npx -y github:JuliusBrussee/caveman#v1.9.0 --non-interactive --only claude` (as the `claude` user; requires Node.js >= 18)
   - For the `claude` provider the installer uses the Claude Code **plugin mechanism** (`claude plugin marketplace add` + `claude plugin install caveman@caveman`) and wires hooks (by default it would also add a `caveman-shrink` MCP entry — suppressed here with `--no-mcp-shrink`, see below)
   - **Verified by build:** the `claude plugin marketplace add` + `claude plugin install` steps succeed during `docker build` — `marketplace add` is a public HTTPS git clone and `plugin install` is a local copy, so neither hits the Claude auth API (and `configure-claude.sh` has already written `~/.claude.json` by that layer). Skill + hooks are installed. Not made best-effort, so any future failure stays visible
   - Installed with **`--no-mcp-shrink`**: caveman's auto-registration wired `caveman-shrink` as a standalone MCP server with no upstream command, which always `✗ Failed to connect` (it is middleware, not a server). Instead `caveman-shrink` is pre-installed globally and applied as a wrapper around the codegraph MCP server (see CodeGraph / MCP Servers)
   - Source: https://github.com/JuliusBrussee/caveman
 - **CodeGraph** - Pre-indexed code knowledge graph (symbols, call graph, impact) served to agents over MCP (`codegraph` binary)
-  - Installed via `npm ci` from the locked toolchain (`@colbymchenry/codegraph@0.9.8`); also registered as the `codegraph` MCP server, wrapped by `caveman-shrink` to compress its (verbose) tool descriptions — verified `✓ Connected` (see "MCP Servers")
+  - Installed via `npm ci` from the locked toolchain (`@colbymchenry/codegraph@1.0.0`); also registered as the `codegraph` MCP server, wrapped by `caveman-shrink` to compress its (verbose) tool descriptions — verified `✓ Connected` (see "MCP Servers")
   - **Not pure JS:** the npm package is a thin shim; the real artifact is a per-platform optionalDependency (`@colbymchenry/codegraph-linux-x64`) bundling a vendored Node 24 runtime + prebuilt binary. `codegraph --help` at build time verifies the binary runs (**verified**: the vendored Node 24 binary runs on `node:22-trixie-slim`)
   - `CODEGRAPH_NO_DOWNLOAD=1` (baked-in ENV) forbids the shim's runtime fallback that fetches the binary from GitHub Releases — the binary must come from the npm registry only
   - 100% local: local SQLite index (`.codegraph/codegraph.db`, FTS5), no API keys, no external services
@@ -386,6 +386,7 @@ Inside the debug shell, you can run diagnostics manually:
 - `.env.example` - Example environment variables for MCP servers
 - `.env` - Your local environment variables (create from .env.example)
 - `.dockerignore` - Files excluded from Docker build context
+- `install.sh` - One-line installer (`curl … | bash`): pulls the GHCR image, stores the OAuth token in `~/.config/claude-standalone/claude.env` (chmod 600), and installs a `claude-box` launcher into `~/.local/bin` (the hardened `docker run` wrapped as an executable; supports `--uninstall` and a non-interactive path via `CLAUDE_CODE_OAUTH_TOKEN`)
 - `run_claude.sh` - Main entry point for running Claude Code (autonomous agent)
 - `run_acp.sh` - ACP entry point for IDE use (Zed); launched BY the editor over stdio
 - `.devcontainer/devcontainer.json` - Dev Container definition (interactive dev inside the image)

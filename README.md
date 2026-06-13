@@ -5,6 +5,95 @@ as an autonomous agent over your project. Built on Node.js 22 LTS (Debian Trixie
 multi-arch (linux/amd64 + linux/arm64), with a pinned, lockfile-controlled CLI toolchain and a
 curated set of MCP servers.
 
+## Getting started
+
+The prebuilt multi-arch image is published to GHCR — **you don't clone this repo or build anything**.
+Requires Docker and a Claude Code OAuth token (`claude setup-token`).
+
+### Quick install (Linux / macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalone/main/install.sh | bash
+```
+
+The installer pulls the GHCR image, asks for your OAuth token once (stored in
+`~/.config/claude-standalone/claude.env`, `chmod 600`), and installs a `claude-box` launcher into
+`~/.local/bin`. Then, from any project directory (mounted **read-write**):
+
+```bash
+claude-box                  # hardened agent over the current directory
+claude-box --model opus     # extra args pass through to claude
+```
+
+If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add (e.g.
+`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`).
+
+```bash
+# inspect before running (it's curl | bash, after all):
+curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalone/main/install.sh -o install.sh
+less install.sh && bash install.sh
+
+CLAUDE_CODE_OAUTH_TOKEN=... bash install.sh   # non-interactive (skips the token prompt)
+bash install.sh --uninstall                   # remove the launcher (config is left in place)
+```
+
+`claude-box` forwards your host git identity (so commits are attributed to you) and, if you set
+`DEPLOY_KEY=/path/to/scoped_key`, mounts it read-only to enable `git push` (see [SECURITY.md](./SECURITY.md)).
+
+### Without the installer — one `docker run`
+
+Save your token once, then run the image directly. The token file is read by `--env-file`, so it
+must be raw `KEY=value` (no quotes, no `export`):
+
+```bash
+mkdir -p ~/.config/claude-standalone
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' 'YOUR_TOKEN' > ~/.config/claude-standalone/claude.env
+chmod 600 ~/.config/claude-standalone/claude.env
+# optional MCP keys: add CONTEXT7_API_KEY=... / PERPLEXITY_API_KEY=... lines
+
+docker pull ghcr.io/highload-zone/claude-code-standalone:latest
+```
+
+From the project directory you want the agent to work on:
+
+```bash
+docker run -it --rm \
+  --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=100 --network=bridge \
+  --user "$(id -u):$(id -g)" \
+  --tmpfs /home/agent:exec,mode=1777,size=512m -e HOME=/home/agent \
+  --tmpfs /tmp:noexec,nosuid,size=100m \
+  -v "$PWD:/workspace:rw" -w /workspace \
+  --env-file ~/.config/claude-standalone/claude.env \
+  ghcr.io/highload-zone/claude-code-standalone:latest
+```
+
+> **Why the command is long — and don't shorten it.** The image is self-contained (entrypoint, tools,
+> config, MCP servers are all baked in), but the container's *protection* — `--cap-drop=ALL`, the
+> non-root `--user`, the `noexec` tmpfs scratch, network isolation — are **`docker run` flags, not
+> something an image can carry**: Docker's security model puts these in the operator's hands by
+> design. `$(id -u):$(id -g)` (so the agent owns your files) and `$PWD` (which project to mount) are
+> likewise resolved on the host at run time. Dropping the hardening flags to make the command shorter
+> removes exactly the boundary this image exists to provide — that's why the installer above wraps
+> the full command in `claude-box` rather than offering a trimmed-down one.
+
+To attribute commits to **you** and/or enable `git push`, add to the `docker run`:
+
+```bash
+  -e GIT_AUTHOR_NAME="$(git config user.name)"   -e GIT_COMMITTER_NAME="$(git config user.name)" \
+  -e GIT_AUTHOR_EMAIL="$(git config user.email)" -e GIT_COMMITTER_EMAIL="$(git config user.email)" \
+  # for push, mount a SCOPED, read-only deploy key (see SECURITY.md):
+  -v /path/to/repo_deploy_key:/home/agent/deploy_key:ro \
+  -e GIT_SSH_COMMAND="ssh -i /home/agent/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+```
+
+> **Token in the system keyring (optional).** To avoid a plaintext `--env-file`, store the token in
+> the OS keyring and inject it at run time instead — drop `--env-file` and add
+> `-e CLAUDE_CODE_OAUTH_TOKEN="$(secret-tool lookup service claude-code key oauth)"` on Linux
+> (libsecret), or `$(security find-generic-password -s claude-code -a oauth -w)` on macOS (Keychain).
+
+See [Requirements](#requirements), [Setup](#setup), and [Run](#run) below for building locally and
+the repo's script-based flow.
+
 ## Why
 
 Running an autonomous coding agent with broad permissions directly on your host is risky. This image
@@ -57,15 +146,15 @@ Base: `node:22-trixie-slim` (Node 22 LTS, Debian 13 / glibc 2.41). Multi-arch (a
 Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
 integrity, exact versions):
 
-- `@anthropic-ai/claude-code` (2.1.159), `@fission-ai/openspec` (1.3.1)
-- `@agentclientprotocol/claude-agent-acp` (0.39.0) — ACP adapter for IDE use (Zed); reuses
+- `@anthropic-ai/claude-code` (2.1.177), `@fission-ai/openspec` (1.4.1)
+- `@agentclientprotocol/claude-agent-acp` (0.44.0) — ACP adapter for IDE use (Zed); reuses
   the pinned `claude` binary via `CLAUDE_CODE_EXECUTABLE`
-- `@colbymchenry/codegraph` (0.9.8, MCP) wrapped by `caveman-shrink` (0.1.0)
+- `@colbymchenry/codegraph` (1.0.0, MCP) wrapped by `caveman-shrink` (0.1.0)
 - MCP servers: `sequential-thinking`, `context7` (HTTP), `perplexity`
-- caveman skill (plugin, tag `v1.8.2`)
-- Dev tools: `pnpm` 11.5.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.8.3, `eslint` 10.4.1
+- caveman skill (plugin, tag `v1.9.0`)
+- Dev tools: `pnpm` 11.6.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.8.4, `eslint` 10.5.0
 
-GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.42.0), `git-delta` (0.19.2).
+GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.42.4), `git-delta` (0.19.2).
 CLI utilities: `jq`, `ripgrep`, `fd`, `tree`, `fzf`, `mc`, `gnupg`.
 
 See [CLAUDE.md](./CLAUDE.md) for the full architecture and per-component details.
