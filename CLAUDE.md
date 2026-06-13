@@ -408,7 +408,7 @@ Inside the debug shell, you can run diagnostics manually:
 - `.env.example` - Example environment variables for MCP servers
 - `.env` - Your local environment variables (create from .env.example)
 - `.dockerignore` - Files excluded from Docker build context
-- `install.sh` - One-line installer (`curl … | bash`): pulls the GHCR image, stores the OAuth token in `~/.config/claude-standalone/claude.env` (chmod 600), and installs a `claude-box` launcher into `~/.local/bin` (the hardened `docker run` wrapped as an executable; supports `--uninstall` and a non-interactive path via `CLAUDE_CODE_OAUTH_TOKEN`)
+- `install.sh` - One-line installer (`curl … | bash`): pulls the GHCR image, stores the OAuth token in `~/.config/claude-standalone/claude.env` (chmod 600), and installs a `claude-box` launcher into `~/.local/bin` (the hardened `docker run` wrapped as an executable; supports `--uninstall` and a non-interactive path via `CLAUDE_CODE_OAUTH_TOKEN`). Also detects host `~/.claude/{agents,commands,skills}` and offers to pass them through — **mount** the live path (default), **copy** a snapshot to `~/.config/claude-standalone/resources/`, or **skip** (override non-interactively with `CLAUDE_RESOURCES_MODE`); the choice is written to `resources.conf`, `claude-box` mounts the paths read-only at `/host-claude/*`, and the entrypoint merges them OVER the baked state (host wins on collision; baked `opsx`/openspec skills survive)
 - `run_claude.sh` - Main entry point for running Claude Code (autonomous agent)
 - `run_acp.sh` - ACP entry point for IDE use (Zed); launched BY the editor over stdio
 - `.devcontainer/devcontainer.json` - Dev Container definition (interactive dev inside the image)
