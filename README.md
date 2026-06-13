@@ -117,8 +117,11 @@ A single mode. The wrapper scripts (`run_claude.sh`, `debug-shell.sh`) apply har
 - Footgun guards: the scripts refuse `--privileged`, `docker.sock`, `--pid=host`, `--network=host`,
   `--cap-add`, or running as host root
 
-The entrypoint runs `claude --dangerously-skip-permissions --remote-control` — the container
-boundary is the perimeter, and Remote Control lets you drive the in-container agent remotely.
+The entrypoint runs `claude --dangerously-skip-permissions` — the container boundary is the
+perimeter. Remote Control (driving the in-container agent remotely) is **opt-in**: set
+`CLAUDE_REMOTE_CONTROL=1` to add `--remote-control`. Note it needs a full-scope login token
+(`claude auth login`); the `CLAUDE_CODE_OAUTH_TOKEN` this image uses is inference-only, so Remote
+Control stays disabled with it.
 
 > ⚠️ **On a host where the Docker daemon runs as root, `docker run` is equivalent to host root.**
 > The wrapper scripts and their guards protect against *accidental* misconfiguration, **not** a
