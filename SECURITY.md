@@ -54,9 +54,19 @@ may be root. Consequently:
 
 ## Known limitations (by design)
 
-- **The image ENTRYPOINT is permissive** (`--dangerously-skip-permissions`). The
-  container boundary is the perimeter; in-app permission prompts are disabled. A bare `docker run`
-  without a wrapper still has no host-level hardening. Always use the wrapper scripts.
+- **The image ENTRYPOINT runs in auto mode by default, not full bypass.** `permissions.defaultMode`
+  is `"auto"` (`~/.claude/settings.json`): the agent runs autonomously, but a background classifier
+  vets actions and blocks dangerous ones. Full bypass (`--dangerously-skip-permissions`) is now
+  **opt-in** via `CLAUDE_BYPASS_PERMISSIONS=1`, for isolated/throwaway containers that accept no
+  in-app checks. The OS-level container boundary is still the perimeter; a bare `docker run` without
+  a wrapper has no host-level hardening — always use the wrapper scripts. Two by-design auto-mode
+  behaviors: (a) on entering auto, blanket `Bash(*)` / `Agent` allow rules are dropped (the
+  classifier takes over; narrow rules carry over); (b) in non-interactive `-p` runs, repeated
+  classifier blocks abort the session (no user to prompt).
+- **Auto mode can silently fall back to `default`.** If the account/model doesn't support auto
+  (e.g. Team/Enterprise without admin-enabled auto, or a non-API provider), Claude Code starts in
+  `default` mode with no error — meaning it prompts on most actions. Verify the status bar shows
+  `auto` on first run; set `CLAUDE_BYPASS_PERMISSIONS=1` if you need unattended operation regardless.
 - **Remote Control is opt-in and off by default.** Set `CLAUDE_REMOTE_CONTROL=1` to add
   `--remote-control`, which opens an outbound connection to the Remote Control service. It also
   requires a **full-scope login token** (`claude auth login`): the long-lived `CLAUDE_CODE_OAUTH_TOKEN`
@@ -67,8 +77,11 @@ may be root. Consequently:
   On a root host this is an exfiltration channel under prompt injection — restrict egress at the
   Docker-network/daemon level (cap-drop=ALL prevents in-container iptables) or remove those MCP
   servers from `mcp-servers.json`.
-- **Prompt injection (the main runtime risk).** With `--dangerously-skip-permissions`, any file in
-  the project is executable instructions for the autonomous agent. The project is mounted
+- **Prompt injection (the main runtime risk).** Any file in the project is potential instructions for
+  the autonomous agent. In the default **auto mode** the classifier blocks the worst injected actions
+  (exfiltration to external endpoints, `curl | bash`, force-push, prod deploys) — but it is a research
+  preview, not a guarantee, and boundaries you state in chat can be lost to context compaction. With
+  `CLAUDE_BYPASS_PERMISSIONS=1` there are **no** in-app checks at all. The project is mounted
   **read-write**, so an injected agent can modify project files, push (if a deploy key is set), and
   exfiltrate code via egress. Residual risk is **Medium** with a scoped deploy key (below). **Use on
   trusted projects only** and review what the agent commits.
@@ -100,9 +113,9 @@ Two additional entrypoints exist for IDE use; both change the posture relative t
 - **ACP adapter (`run_acp.sh` → `claude-agent-acp`).** The editor (e.g. Zed) launches the container
   over stdio and drives it via the Agent Client Protocol. Crucially, this path does **not** pass
   `--dangerously-skip-permissions`; tool calls (edits, shell commands) are sent back to the editor as
-  **permission requests a human approves**. So the ACP path is *less* permissive than the skip-all
-  agent entrypoint — a human gates actions, which is a genuine deviation from "the container boundary
-  is the only perimeter." It keeps the same hardening (`cap-drop=ALL`, `no-new-privileges`, bridge
+  **permission requests a human approves**. So the ACP path is *less* permissive than the autonomous
+  agent entrypoint — a human gates each action, versus auto mode's background classifier (or full
+  bypass under `CLAUDE_BYPASS_PERMISSIONS=1`). It keeps the same hardening (`cap-drop=ALL`, `no-new-privileges`, bridge
   network, non-root `--user`, tmpfs HOME) with a raised `--pids-limit` (interactive tooling forks
   more). The project is bind-mounted **read-write at its host-absolute path** (path coherence for the
   editor); the same `DEPLOY_KEY` model gates `git push`. Outbound network and prompt-injection risks

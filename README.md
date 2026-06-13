@@ -117,11 +117,22 @@ A single mode. The wrapper scripts (`run_claude.sh`, `debug-shell.sh`) apply har
 - Footgun guards: the scripts refuse `--privileged`, `docker.sock`, `--pid=host`, `--network=host`,
   `--cap-add`, or running as host root
 
-The entrypoint runs `claude --dangerously-skip-permissions` — the container boundary is the
-perimeter. Remote Control (driving the in-container agent remotely) is **opt-in**: set
-`CLAUDE_REMOTE_CONTROL=1` to add `--remote-control`. Note it needs a full-scope login token
-(`claude auth login`); the `CLAUDE_CODE_OAUTH_TOKEN` this image uses is inference-only, so Remote
-Control stays disabled with it.
+The entrypoint runs `claude` in **auto mode** (`permissions.defaultMode: "auto"` in
+`~/.claude/settings.json`) — autonomous, but with a background classifier that blocks dangerous
+actions (prompt-injection-driven commands, `curl | bash`, force-push, pushing to `main`, prod
+deploys). The OS-level container boundary is still the perimeter. Auto mode engages on the Anthropic
+API with a supported model; if it's unavailable for your account it **silently falls back to
+`default`** (prompts on each action) — confirm the status bar shows `auto` on first run.
+
+Two opt-in env vars (off by default, each added to the launch only when set):
+- `CLAUDE_BYPASS_PERMISSIONS=1` — re-adds `--dangerously-skip-permissions` (full bypass, no in-app
+  safety checks) for isolated/throwaway containers.
+- `CLAUDE_REMOTE_CONTROL=1` — adds `--remote-control` (needs a full-scope `claude auth login` token;
+  the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it).
+
+A stronger **advisor** model (`advisorModel: "opus"`) is configured by default: Claude consults Opus
+at decision points (requires the Anthropic API). It's a no-op if you run a main model that outranks
+Opus (e.g. `--model fable`, where an Opus advisor is rejected).
 
 > ⚠️ **On a host where the Docker daemon runs as root, `docker run` is equivalent to host root.**
 > The wrapper scripts and their guards protect against *accidental* misconfiguration, **not** a

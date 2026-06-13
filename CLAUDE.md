@@ -45,7 +45,8 @@ The container implements defense-in-depth:
 
 Claude Code configuration is pre-configured in the container:
 - `claude-config.json` - Main Claude configuration with all permissions enabled
-- `settings.local.json` - Local settings copied to `~/.claude/` and `/workspace/.claude/`
+- `settings.local.json` - Local settings copied to `~/.claude/settings.local.json` (statusLine + permissions)
+- `settings.json` - User settings copied to `~/.claude/settings.json`: `permissions.defaultMode: "auto"` + `advisorModel: "opus"` (auto mode must be in user-home, not project scope)
 - All permissions are auto-accepted for jailfree operation mode
 
 ## Common Commands
@@ -216,6 +217,9 @@ pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 
 **Runtime variables** (set when running container):
 - `CLAUDE_CODE_OAUTH_TOKEN` - OAuth token for Claude Code authentication (required)
+- `CLAUDE_BYPASS_PERMISSIONS` - set to `1` to add `--dangerously-skip-permissions` to the entrypoint
+  (off by default; default is auto mode). Full bypass, no in-app safety checks — for isolated/throwaway
+  containers only.
 - `CLAUDE_REMOTE_CONTROL` - set to `1` to add `--remote-control` to the entrypoint (off by default).
   Requires a full-scope login token (`claude auth login`); the inference-only `CLAUDE_CODE_OAUTH_TOKEN`
   cannot drive Remote Control, so this is a no-op with it.
@@ -228,21 +232,32 @@ pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 - `CODEGRAPH_NO_DOWNLOAD=1` (forbids CodeGraph's runtime binary download from GitHub Releases; binary must come from the npm registry)
 - `NODE_ENV=production`, plus security limits (`RLIMIT_CORE=0`, `RLIMIT_NOFILE=1024`, `YAMA_PTRACE_SCOPE=1`)
 
-**Pre-configured behavior** (`claude-config.json`, copied to `~/.claude.json`):
-- Full permission bypass for `/workspace`: `dangerouslySkipPermissions`, `autoAcceptPermissions`,
-  `defaultMode: acceptEdits`, all tools + `mcp__*` allowed
+**Pre-configured behavior:**
+- **Permission mode = `auto`** (set in `~/.claude/settings.json`, NOT `claude-config.json`). `auto`
+  must live in user-home `settings.json` — Claude Code (v2.1.142+) ignores `defaultMode: "auto"` from
+  project-scope settings. `claude-config.json` (`~/.claude.json`) is deliberately stripped of all
+  mode/auto-accept-forcing keys (`dangerouslySkipPermissions`, `autoAcceptPermissions`,
+  `defaultPermissionMode`, project `permissions.defaultMode`, `autoAccept*`) so settings.json is the
+  single source of mode. Trust/onboarding keys (`hasTrustDialogAccepted`, `hasCompletedOnboarding`,
+  `autoTrustNewProjects`, `suppressTrustPrompts`, `bypassPermissionsModeAccepted`) are kept to avoid
+  first-run dialogs in headless.
+- **`advisorModel: "opus"`** (in `settings.json`) — Claude consults Opus at decision points (Anthropic
+  API only). No-op if the main model outranks Opus (e.g. Fable).
+- `claude-config.json` still pre-approves tools for `/workspace` (`allow` rules + `mcp__*`); note auto
+  mode drops blanket `Bash(*)`/`Agent` rules at runtime (the classifier takes over).
 - `alwaysThinkingEnabled: true`, `autoUpdates: false`
 - The `typescript-lsp@claude-plugins-official` plugin is enabled (works with `ENABLE_LSP_TOOL=1`)
-- The OAuth account is hard-coded in this file — replace it if using a different account
+- The OAuth account is hard-coded in `claude-config.json` — replace it if using a different account
 
 ## Development Workflow (single read-write mode)
 
 1. **Run from your project**: `cd /path/to/repo && ./run_claude.sh`. The current directory is mounted
    **read-write** at `/workspace`; the container runs as your host user (`--user $(id -u):$(id -g)`).
-2. **Entrypoint**: `claude --dangerously-skip-permissions`; the entrypoint first
-   copies the baked agent state from `/home/claude` into the writable tmpfs HOME. Remote Control is
-   opt-in: `--remote-control` is added only when `CLAUDE_REMOTE_CONTROL=1` (it needs a full-scope
-   login token; the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it).
+2. **Entrypoint**: `claude` (auto mode via settings.json); the entrypoint first copies the baked
+   agent state from `/home/claude` into the writable tmpfs HOME. Two opt-in flags, each added only
+   when its env var is set: `CLAUDE_BYPASS_PERMISSIONS=1` → `--dangerously-skip-permissions` (full
+   bypass for isolated containers); `CLAUDE_REMOTE_CONTROL=1` → `--remote-control` (needs a
+   full-scope `claude auth login` token; the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it).
 3. **Autonomous agent**: Claude edits/commits the project directly in `/workspace`. For `git push`,
    set `DEPLOY_KEY=/path/to/repo_deploy_key` (scoped, read-only mounted). Commit identity comes from
    your host `git config` (passed as env).
@@ -385,6 +400,7 @@ Inside the debug shell, you can run diagnostics manually:
 - `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:22 after editing package.json
 - `claude-config.json` - Claude Code configuration with all permissions
 - `settings.local.json` - Local Claude settings; also wires the `statusLine` to `/usr/local/bin/claude-statusline.sh`
+- `settings.json` - User Claude settings baked to `~/.claude/settings.json`: `permissions.defaultMode: "auto"` + `advisorModel: "opus"`
 - `statusline-command.sh` - Claude Code statusLine script (compact line: dir, git branch/dirty, model, duration, context %, 5h/7d rate limits); baked to `/usr/local/bin/claude-statusline.sh` (fixed, HOME-independent path). Deps (jq, git, awk, date, grep) are all present in the image
 - `mcp-servers.json` - Base MCP server configurations (always installed)
 - `mcp-servers-optional.json` - Optional MCP servers (require API keys)
