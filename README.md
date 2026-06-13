@@ -8,28 +8,53 @@ curated set of MCP servers.
 ## Getting started
 
 The prebuilt multi-arch image is published to GHCR — **you don't clone this repo or build anything**.
-Three steps: save your token once, pull the image, run it over any project. No scripts required.
+Requires Docker and a Claude Code OAuth token (`claude setup-token`).
 
-**Prerequisites:** Docker, and a Claude Code OAuth token (`claude setup-token`).
+### Quick install (Linux / macOS)
 
-**1. Save your token once (used from any project)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalone/main/install.sh | bash
+```
+
+The installer pulls the GHCR image, asks for your OAuth token once (stored in
+`~/.config/claude-standalone/claude.env`, `chmod 600`), and installs a `claude-box` launcher into
+`~/.local/bin`. Then, from any project directory (mounted **read-write**):
+
+```bash
+claude-box                  # hardened agent over the current directory
+claude-box --model opus     # extra args pass through to claude
+```
+
+If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add (e.g.
+`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`).
+
+```bash
+# inspect before running (it's curl | bash, after all):
+curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalone/main/install.sh -o install.sh
+less install.sh && bash install.sh
+
+CLAUDE_CODE_OAUTH_TOKEN=... bash install.sh   # non-interactive (skips the token prompt)
+bash install.sh --uninstall                   # remove the launcher (config is left in place)
+```
+
+`claude-box` forwards your host git identity (so commits are attributed to you) and, if you set
+`DEPLOY_KEY=/path/to/scoped_key`, mounts it read-only to enable `git push` (see [SECURITY.md](./SECURITY.md)).
+
+### Without the installer — one `docker run`
+
+Save your token once, then run the image directly. The token file is read by `--env-file`, so it
+must be raw `KEY=value` (no quotes, no `export`):
 
 ```bash
 mkdir -p ~/.config/claude-standalone
-curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalone/main/.env.example \
-  -o ~/.config/claude-standalone/claude.env
-# Edit the file: set CLAUDE_CODE_OAUTH_TOKEN (required). Context7 / Perplexity keys are optional.
-```
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' 'YOUR_TOKEN' > ~/.config/claude-standalone/claude.env
+chmod 600 ~/.config/claude-standalone/claude.env
+# optional MCP keys: add CONTEXT7_API_KEY=... / PERPLEXITY_API_KEY=... lines
 
-**2. Pull the image**
-
-```bash
 docker pull ghcr.io/highload-zone/claude-code-standalone:latest
 ```
 
-**3. Run the agent over your project**
-
-From the project directory you want the agent to work on (it is mounted **read-write**):
+From the project directory you want the agent to work on:
 
 ```bash
 docker run -it --rm \
@@ -48,33 +73,10 @@ docker run -it --rm \
 > something an image can carry**: Docker's security model puts these in the operator's hands by
 > design. `$(id -u):$(id -g)` (so the agent owns your files) and `$PWD` (which project to mount) are
 > likewise resolved on the host at run time. Dropping the hardening flags to make the command shorter
-> removes exactly the boundary this image exists to provide. To avoid retyping, wrap it in a shell
-> function (below) — that's a wrapper, named honestly, not a shorter command.
+> removes exactly the boundary this image exists to provide — that's why the installer above wraps
+> the full command in `claude-box` rather than offering a trimmed-down one.
 
-### One command from any directory (shell function)
-
-Add to `~/.bashrc` / `~/.zshrc` (a global shell setting, not a script committed to a repo):
-
-```bash
-claude-box() {
-  docker run -it --rm \
-    --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=100 --network=bridge \
-    --user "$(id -u):$(id -g)" \
-    --tmpfs /home/agent:exec,mode=1777,size=512m -e HOME=/home/agent \
-    --tmpfs /tmp:noexec,nosuid,size=100m \
-    -v "$PWD:/workspace:rw" -w /workspace \
-    --env-file ~/.config/claude-standalone/claude.env \
-    ghcr.io/highload-zone/claude-code-standalone:latest "$@"
-}
-```
-
-Then just `claude-box` from any project. (The repo also ships `run_claude.sh`, which is the same
-command plus `git`-identity/deploy-key handling — use it if you cloned the repo.)
-
-### Commits as you, and `git push`
-
-The bare command lets the agent edit and commit locally with the container's default git identity.
-To attribute commits to **you** and/or enable `git push`, add to the `docker run` (or the function):
+To attribute commits to **you** and/or enable `git push`, add to the `docker run`:
 
 ```bash
   -e GIT_AUTHOR_NAME="$(git config user.name)"   -e GIT_COMMITTER_NAME="$(git config user.name)" \
@@ -84,24 +86,13 @@ To attribute commits to **you** and/or enable `git push`, add to the `docker run
   -e GIT_SSH_COMMAND="ssh -i /home/agent/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
 ```
 
-### Token in the system keyring (optional)
-
-`--env-file` keeps the token in a plaintext file. To hold it in the OS keyring and inject it at run
-time instead (this is, honestly, a thin wrapper around `docker run` — name it as such), drop
-`--env-file` and add `-e CLAUDE_CODE_OAUTH_TOKEN=...`:
-
-```bash
-# Linux (libsecret): store once, then look it up in the run command
-secret-tool store --label='Claude Code' service claude-code key oauth
-  -e CLAUDE_CODE_OAUTH_TOKEN="$(secret-tool lookup service claude-code key oauth)"
-
-# macOS (Keychain): store once, then look it up
-security add-generic-password -s claude-code -a oauth -w
-  -e CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s claude-code -a oauth -w)"
-```
+> **Token in the system keyring (optional).** To avoid a plaintext `--env-file`, store the token in
+> the OS keyring and inject it at run time instead — drop `--env-file` and add
+> `-e CLAUDE_CODE_OAUTH_TOKEN="$(secret-tool lookup service claude-code key oauth)"` on Linux
+> (libsecret), or `$(security find-generic-password -s claude-code -a oauth -w)` on macOS (Keychain).
 
 See [Requirements](#requirements), [Setup](#setup), and [Run](#run) below for building locally and
-the script-based flow.
+the repo's script-based flow.
 
 ## Why
 
