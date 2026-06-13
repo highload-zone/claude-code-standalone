@@ -10,12 +10,7 @@ curated set of MCP servers.
 The prebuilt multi-arch image is published to GHCR — **you don't clone this repo or build anything**.
 Three steps: save your token once, pull the image, run it over any project. No scripts required.
 
-**Prerequisites**
-
-- Docker, and a Claude Code OAuth token (`claude setup-token`).
-- The GHCR package must be **public** for an anonymous `docker pull`. One-time, by the repo owner:
-  *GitHub → repo → Packages → `claude-code-standalone` → Package settings → Change visibility → Public*.
-  If it stays private, run `docker login ghcr.io` (with a PAT that has `read:packages`) first.
+**Prerequisites:** Docker, and a Claude Code OAuth token (`claude setup-token`).
 
 **1. Save your token once (used from any project)**
 
