@@ -34,8 +34,16 @@ curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalon
 less install.sh && bash install.sh
 
 CLAUDE_CODE_OAUTH_TOKEN=... bash install.sh   # non-interactive (skips the token prompt)
+CLAUDE_RESOURCES_MODE=mount bash install.sh   # non-interactive resource choice: mount | copy | skip
 bash install.sh --uninstall                   # remove the launcher (config is left in place)
 ```
+
+**Your local agents, commands, and skills.** If the installer finds `~/.claude/agents`,
+`~/.claude/commands`, or `~/.claude/skills` on the host, it offers to pass them through to the
+container: **mount** the live path (default — edits on the host show up next run), **copy** a
+snapshot into `~/.config/claude-standalone/resources/`, or **skip**. `claude-box` mounts the chosen
+paths read-only and the container merges them **over** its baked state, so your resources win on a
+name clash while the image's own commands/skills (e.g. `opsx`) still work.
 
 `claude-box` forwards your host git identity (so commits are attributed to you) and, if you set
 `DEPLOY_KEY=/path/to/scoped_key`, mounts it read-only to enable `git push` (see [SECURITY.md](./SECURITY.md)).

@@ -273,6 +273,16 @@ if [ "$HOME" != "/home/claude" ] && [ ! -e "$HOME/.claude.json" ]; then\n\
   mkdir -p "$HOME"\n\
   cp -a /home/claude/. "$HOME/" 2>/dev/null || true\n\
 fi\n\
+# Merge host-provided resources mounted by the launcher at /host-claude/<name>\n\
+# OVER the baked state. Unconditional and AFTER the baked copy (so a resumed HOME\n\
+# still receives them). Host files win on name collision; baked-only files such as\n\
+# commands/opsx and the openspec skills survive because cp merges, not replaces.\n\
+for d in agents commands skills; do\n\
+  if [ -d "/host-claude/$d" ]; then\n\
+    mkdir -p "$HOME/.claude/$d"\n\
+    cp -a "/host-claude/$d/." "$HOME/.claude/$d/" 2>/dev/null || true\n\
+  fi\n\
+done\n\
 cd /workspace 2>/dev/null || cd "$HOME"\n\
 EXTRA_ARGS=""\n\
 mode_msg="permission mode: auto (default; falls back to default mode if auto is unavailable)"\n\
