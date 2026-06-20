@@ -145,6 +145,17 @@ compromised and rotate it immediately.
 - Residual gaps (documented, not yet closed): the caveman installer clones its marketplace repo at
   default-branch HEAD (build-reproducibility gap, not a runtime hole), and `npm ci` does not
   neutralize postinstall network fetchers in transitive dependencies.
+- Known transitive advisories (`npm audit`): the toolchain ships with `form-data` and `hono`
+  patched (`npm audit fix --package-lock-only`, no top-level pin drift). Two high-severity
+  advisories remain in `@modelcontextprotocol/sdk` (≤1.25.1), pulled in transitively by
+  `perplexity-mcp@0.2.3` (the latest release, which pins the old SDK) — upstream marks both
+  "no fix available." Applicability in this image is limited: the DNS-rebinding advisory
+  (GHSA-w48q-cv73-mx4w) targets HTTP servers bound to localhost that accept browser origins, but
+  `perplexity-mcp` runs as a **stdio** server here (no listening socket); the ReDoS advisory
+  (GHSA-8r9q-7v3j-jr4g) requires feeding adversarial input through the SDK's parser. This is a
+  **deliberately accepted residual**. Closing it would mean dropping `perplexity-mcp` or forcing a
+  patched SDK via an npm `overrides` entry — the latter is a user-decided follow-up because it may
+  break `perplexity-mcp`'s SDK API usage.
 - The ACP adapter pulls in `@anthropic-ai/claude-agent-sdk`, which ships its own Claude Code binary
   as a per-platform optionalDependency. To avoid executing a second, separately-sourced Claude
   binary, `CLAUDE_CODE_EXECUTABLE` pins the ACP path to the already-audited `claude` from the
