@@ -168,13 +168,13 @@ Base: `node:22-trixie-slim` (Node 22 LTS, Debian 13 / glibc 2.41). Multi-arch (a
 Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
 integrity, exact versions):
 
-- `@anthropic-ai/claude-code` (2.1.177), `@fission-ai/openspec` (1.4.1)
-- `@agentclientprotocol/claude-agent-acp` (0.44.0) — ACP adapter for IDE use (Zed); reuses
+- `@anthropic-ai/claude-code` (2.1.183), `@fission-ai/openspec` (1.4.1)
+- `@agentclientprotocol/claude-agent-acp` (0.48.0) — ACP adapter for IDE use (Zed); reuses
   the pinned `claude` binary via `CLAUDE_CODE_EXECUTABLE`
-- `@colbymchenry/codegraph` (1.0.0, MCP) wrapped by `caveman-shrink` (0.1.0)
+- `@colbymchenry/codegraph` (1.0.1, MCP) wrapped by `caveman-shrink` (0.1.0)
 - MCP servers: `sequential-thinking`, `context7` (HTTP), `perplexity`
 - caveman skill (plugin, tag `v1.9.0`)
-- Dev tools: `pnpm` 11.6.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.8.4, `eslint` 10.5.0
+- Dev tools: `pnpm` 11.8.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.8.4, `eslint` 10.5.0
 
 GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.42.4), `git-delta` (0.19.2).
 CLI utilities: `jq`, `ripgrep`, `fd`, `tree`, `fzf`, `mc`, `gnupg`.

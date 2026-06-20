@@ -13,7 +13,7 @@ This is a security-hardened Docker container that runs Claude Code with pre-inst
 The container is built on Node.js 22 (LTS) with the following layers:
 
 1. **Base System** - Debian Trixie (glibc 2.41) with hardened security settings
-2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.177), OpenSpec (1.4.1), CodeGraph (1.0.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.6.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.8.4, eslint 10.5.0)
+2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.183), OpenSpec (1.4.1), CodeGraph (1.0.1), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.8.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.8.4, eslint 10.5.0)
 3. **OpenSpec** - initialized into `/workspace` at build time with telemetry disabled via `OPENSPEC_TELEMETRY=0`
 4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified); `rtk init -g --auto-patch` installs a Claude Code PreToolUse hook that rewrites Bash commands through `rtk`
 5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.9.0`
@@ -205,7 +205,10 @@ different `lockfileVersion`):
 ```bash
 docker run --rm -v "$PWD/tools:/w" -w /w node:22-trixie-slim npm install --package-lock-only
 ```
-Pin only Node-22-compatible versions — check `npm view <pkg>@<ver> engines.node`. The build-time
+After regenerating, run `npm audit` in the same `node:22` image — and, when a clean non-breaking
+fix is offered, `npm audit fix --package-lock-only` — so transitive security advisories surface and
+get patched instead of silently shipping. `npm install` keeps in-range pinned transitive versions,
+so an already-applied patch is not downgraded by a later regen. Pin only Node-22-compatible versions — check `npm view <pkg>@<ver> engines.node`. The build-time
 gate runs each dev tool's `--version` to catch an incompatible engine (this is how the earlier
 pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 
@@ -321,7 +324,7 @@ Two extra entrypoints exist beside the autonomous `run_claude.sh`; they share th
   - Installed with **`--no-mcp-shrink`**: caveman's auto-registration wired `caveman-shrink` as a standalone MCP server with no upstream command, which always `✗ Failed to connect` (it is middleware, not a server). Instead `caveman-shrink` is pre-installed globally and applied as a wrapper around the codegraph MCP server (see CodeGraph / MCP Servers)
   - Source: https://github.com/JuliusBrussee/caveman
 - **CodeGraph** - Pre-indexed code knowledge graph (symbols, call graph, impact) served to agents over MCP (`codegraph` binary)
-  - Installed via `npm ci` from the locked toolchain (`@colbymchenry/codegraph@1.0.0`); also registered as the `codegraph` MCP server, wrapped by `caveman-shrink` to compress its (verbose) tool descriptions — verified `✓ Connected` (see "MCP Servers")
+  - Installed via `npm ci` from the locked toolchain (`@colbymchenry/codegraph@1.0.1`); also registered as the `codegraph` MCP server, wrapped by `caveman-shrink` to compress its (verbose) tool descriptions — verified `✓ Connected` (see "MCP Servers")
   - **Not pure JS:** the npm package is a thin shim; the real artifact is a per-platform optionalDependency (`@colbymchenry/codegraph-linux-x64`) bundling a vendored Node 24 runtime + prebuilt binary. `codegraph --help` at build time verifies the binary runs (**verified**: the vendored Node 24 binary runs on `node:22-trixie-slim`)
   - `CODEGRAPH_NO_DOWNLOAD=1` (baked-in ENV) forbids the shim's runtime fallback that fetches the binary from GitHub Releases — the binary must come from the npm registry only
   - 100% local: local SQLite index (`.codegraph/codegraph.db`, FTS5), no API keys, no external services
