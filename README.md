@@ -132,11 +132,15 @@ deploys). The OS-level container boundary is still the perimeter. Auto mode enga
 API with a supported model; if it's unavailable for your account it **silently falls back to
 `default`** (prompts on each action) — confirm the status bar shows `auto` on first run.
 
-Two opt-in env vars (off by default, each added to the launch only when set):
-- `CLAUDE_BYPASS_PERMISSIONS=1` — re-adds `--dangerously-skip-permissions` (full bypass, no in-app
-  safety checks) for isolated/throwaway containers.
-- `CLAUDE_REMOTE_CONTROL=1` — adds `--remote-control` (needs a full-scope `claude auth login` token;
-  the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it).
+Env vars that change how the entrypoint launches Claude Code:
+- `CLAUDE_BYPASS_PERMISSIONS=1` — opt-in, off by default. Re-adds `--dangerously-skip-permissions`
+  (full bypass, no in-app safety checks) for isolated/throwaway containers.
+- `CLAUDE_REMOTE_CONTROL` — **on by default**; `--remote-control` is passed on every session. Set to
+  `0` to opt out. It only takes effect with a full-scope `claude auth login` token: the inference-only
+  `CLAUDE_CODE_OAUTH_TOKEN` is rejected for Remote Control, and the entrypoint prints that at startup
+  rather than failing silently.
+- `CLAUDE_REMOTE_CONTROL_PREFIX` — prefix for auto-generated Remote Control session names. Defaults to
+  your project directory name (the CLI default would be the container's throwaway hostname).
 
 A stronger **advisor** model (`advisorModel: "opus"`) is configured by default: Claude consults Opus
 at decision points (requires the Anthropic API). It's a no-op if you run a main model that outranks

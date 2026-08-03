@@ -232,9 +232,18 @@ prints a constant without loading the compiler; the build gate therefore also ru
 - `CLAUDE_BYPASS_PERMISSIONS` - set to `1` to add `--dangerously-skip-permissions` to the entrypoint
   (off by default; default is auto mode). Full bypass, no in-app safety checks — for isolated/throwaway
   containers only.
-- `CLAUDE_REMOTE_CONTROL` - set to `1` to add `--remote-control` to the entrypoint (off by default).
-  Requires a full-scope login token (`claude auth login`); the inference-only `CLAUDE_CODE_OAUTH_TOKEN`
-  cannot drive Remote Control, so this is a no-op with it.
+- `CLAUDE_REMOTE_CONTROL` - **on by default**; the entrypoint adds `--remote-control` to every
+  session. Set to `0` to opt out. Requires a full-scope login token (`claude auth login` run inside
+  the container); with the inference-only `CLAUDE_CODE_OAUTH_TOKEN` the flag is inert — verified via
+  `claude doctor`, which reports "Remote Control requires a full-scope login token. Long-lived tokens
+  (from claude setup-token or CLAUDE_CODE_OAUTH_TOKEN) are limited to inference-only for security
+  reasons". The entrypoint prints that caveat at startup whenever `CLAUDE_CODE_OAUTH_TOKEN` is set,
+  so the default is never a silent no-op. There is no settings.json key that turns RC on (only
+  `disableRemoteControl` to turn it off), which is why this is a CLI flag and not a config key.
+- `CLAUDE_REMOTE_CONTROL_PREFIX` - prefix for auto-generated Remote Control session names
+  (`<prefix>-<random-words>`). The CLI default is the hostname, which in a container is a throwaway
+  hex id; `run_claude.sh` and the `claude-box` launcher pass the host project directory name, and the
+  entrypoint falls back to `claude-box`. Sanitised to `[[:alnum:]._-]`, truncated to 40 chars.
 - `MCP_TIMEOUT` - MCP server connection timeout in milliseconds (default: `10000` = 10 seconds)
 - All variables from `.env` file are automatically passed to the container
 
@@ -266,10 +275,12 @@ prints a constant without loading the compiler; the build gate therefore also ru
 1. **Run from your project**: `cd /path/to/repo && ./run_claude.sh`. The current directory is mounted
    **read-write** at `/workspace`; the container runs as your host user (`--user $(id -u):$(id -g)`).
 2. **Entrypoint**: `claude` (auto mode via settings.json); the entrypoint first copies the baked
-   agent state from `/home/claude` into the writable tmpfs HOME. Two opt-in flags, each added only
-   when its env var is set: `CLAUDE_BYPASS_PERMISSIONS=1` → `--dangerously-skip-permissions` (full
-   bypass for isolated containers); `CLAUDE_REMOTE_CONTROL=1` → `--remote-control` (needs a
-   full-scope `claude auth login` token; the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it).
+   agent state from `/home/claude` into the writable tmpfs HOME. `CLAUDE_BYPASS_PERMISSIONS=1` is
+   opt-in and adds `--dangerously-skip-permissions` (full bypass for isolated containers).
+   `--remote-control` is added by **default** (opt out with `CLAUDE_REMOTE_CONTROL=0`), together with
+   `--remote-control-session-name-prefix` from `CLAUDE_REMOTE_CONTROL_PREFIX`; it needs a full-scope
+   `claude auth login` token — the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it, and the
+   entrypoint says so at startup.
 3. **Autonomous agent**: Claude edits/commits the project directly in `/workspace`. For `git push`,
    set `DEPLOY_KEY=/path/to/repo_deploy_key` (scoped, read-only mounted). Commit identity comes from
    your host `git config` (passed as env).

@@ -67,11 +67,16 @@ may be root. Consequently:
   (e.g. Team/Enterprise without admin-enabled auto, or a non-API provider), Claude Code starts in
   `default` mode with no error — meaning it prompts on most actions. Verify the status bar shows
   `auto` on first run; set `CLAUDE_BYPASS_PERMISSIONS=1` if you need unattended operation regardless.
-- **Remote Control is opt-in and off by default.** Set `CLAUDE_REMOTE_CONTROL=1` to add
-  `--remote-control`, which opens an outbound connection to the Remote Control service. It also
-  requires a **full-scope login token** (`claude auth login`): the long-lived `CLAUDE_CODE_OAUTH_TOKEN`
-  / `claude setup-token` this image normally uses is inference-only, so Remote Control stays disabled
-  with it even if the flag is set. Leave the env var unset if your environment forbids that channel.
+- **Remote Control is requested by default.** The entrypoint passes `--remote-control` on every
+  session unless you set `CLAUDE_REMOTE_CONTROL=0`. When it is actually established it opens an
+  outbound connection to the Remote Control service and lets the linked claude.ai / mobile client
+  drive the session — treat it as a remote-input channel into an agent that has read-write access to
+  your project. **Set `CLAUDE_REMOTE_CONTROL=0` if your environment forbids that channel.**
+  It requires a **full-scope login token** (`claude auth login` inside the container): the long-lived
+  `CLAUDE_CODE_OAUTH_TOKEN` / `claude setup-token` this image normally uses is inference-only, so with
+  that token the flag is inert and no channel is opened — `claude doctor` reports
+  "Remote Control requires a full-scope login token … limited to inference-only for security reasons".
+  The entrypoint prints that caveat at startup instead of failing silently.
 - **Outbound network is allowed.** Bridge networking blocks the host network but not the internet.
   `context7` and `perplexity` MCP servers transmit data (including code context) to third parties.
   On a root host this is an exfiltration channel under prompt injection — restrict egress at the
