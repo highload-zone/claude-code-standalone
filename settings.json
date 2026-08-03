@@ -2,7 +2,12 @@
   "permissions": {
     "defaultMode": "auto"
   },
+  "autoMode": {
+    "classifyAllShell": true
+  },
   "advisorModel": "opus",
+  "agentPushNotifEnabled": true,
+  "workflowSizeGuideline": "small",
   "autoUpdates": false,
   "tui": "default",
   "statusLine": {

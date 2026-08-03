@@ -142,6 +142,13 @@ Env vars that change how the entrypoint launches Claude Code:
 - `CLAUDE_REMOTE_CONTROL_PREFIX` — prefix for auto-generated Remote Control session names. Defaults to
   your project directory name (the CLI default would be the container's throwaway hostname).
 
+Fan-out budgets are tightened for a `--pids-limit=100` container (all overridable from `.env`):
+`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=12` (upstream 20), `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=100`
+and `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION=100` (upstream 200 each), `CLAUDE_CODE_RETRY_WATCHDOG=1`
+for unattended retries. `settings.json` additionally sets `autoMode.classifyAllShell: true` (every
+shell command goes through the auto-mode classifier), `agentPushNotifEnabled: true` (proactive phone
+push once Remote Control connects) and `workflowSizeGuideline: "small"`.
+
 A stronger **advisor** model (`advisorModel: "opus"`) is configured by default: Claude consults Opus
 at decision points (requires the Anthropic API). It's a no-op if you run a main model that outranks
 Opus (e.g. `--model fable`, where an Opus advisor is rejected).
