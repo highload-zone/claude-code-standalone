@@ -385,8 +385,9 @@ ENV MCP_TIMEOUT=10000 \
 # CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION / _MAX_WEB_SEARCHES_PER_SESSION (default 200
 #   each) -> 100. Session-wide runaway-loop stops; these are cost/loop guards, not PID
 #   guards, so the number is a deliberately conservative choice rather than a measured
-#   ceiling. NOTE: the lower bound is 1 — a value of 0 is rejected by validation and
-#   silently falls back to the upstream default (verified), so never "disable" with 0.
+#   ceiling. NOTE: 0 does NOT disable them — observed: with either counter set to 0 the
+#   action still ran, i.e. 0 behaves as if the variable were unset. Use 1 for the tightest
+#   real limit.
 # CLAUDE_CODE_RETRY_WATCHDOG=1 — boolean env (the parser accepts 1/true/yes/on).
 #   Upstream now caps CLAUDE_CODE_MAX_RETRIES at 15 and points unattended sessions at
 #   the watchdog instead; this image is exactly that unattended case.

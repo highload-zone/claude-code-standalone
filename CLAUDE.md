@@ -256,9 +256,9 @@ prints a constant without loading the compiler; the build gate therefore also ru
   `CLAUDE_CODE_RETRY_WATCHDOG=1`. The concurrency number is derived from a measurement in
   this image: 4 processes before `claude`, ~11 with `claude` + the four MCP servers, peaking
   at 15 with three parallel Bash tool calls — so ~1-2 PIDs per in-flight tool call over an
-  ~11-PID floor, and the upstream 20 crowds the `--pids-limit=100` cgroup cap. **The session
-  counters have a lower bound of 1: `0` is rejected by validation and silently falls back to
-  the upstream default (verified empirically) — never use `0` to mean "disabled".**
+  ~11-PID floor, and the upstream 20 crowds the `--pids-limit=100` cgroup cap. **`0` does NOT
+  disable the session counters** — observed: with either counter set to `0` the action still
+  ran, i.e. `0` behaves as if the variable were unset. Use `1` for the tightest real limit.
 - `OPENSPEC_TELEMETRY=0` (disables OpenSpec telemetry at build and runtime)
 - `CODEGRAPH_NO_DOWNLOAD=1` (forbids CodeGraph's runtime binary download from GitHub Releases; binary must come from the npm registry)
 - `NODE_ENV=production`, plus security limits (`RLIMIT_CORE=0`, `RLIMIT_NOFILE=1024`, `YAMA_PTRACE_SCOPE=1`)
@@ -286,10 +286,13 @@ prints a constant without loading the compiler; the build gate therefore also ru
   makes dynamic workflows. Accepted values are `unrestricted` / `small` / `medium` / `large`; upstream
   default is `medium`. Set to `small` to match this container's constrained fan-out budget — this is a
   judgement call, not a hard limit, and is the one key here worth revisiting if workflows feel starved.
-- **Verification status of the four keys above.** The session counters are behaviourally verified:
-  with `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION=1` the second WebSearch is refused with
-  "this session has used its web search budget (1 of 1 WebSearch calls)". `CLAUDE_CODE_RETRY_WATCHDOG`
-  is read through the boolean env parser (`1/true/yes/on`). `autoMode.classifyAllShell`,
+- **Verification status of the four keys above.** Two are behaviourally verified. With
+  `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION=1` the second WebSearch is refused: "this session has
+  used its web search budget (1 of 1 WebSearch calls)". With `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=1`,
+  two of three parallel Agent calls are refused: "Concurrent subagent limit reached. You can run 1
+  subagents at once." `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION` was not exercised directly — it shares
+  the read path of the two that were. `CLAUDE_CODE_RETRY_WATCHDOG` is read through the boolean env
+  parser (`1/true/yes/on`). `autoMode.classifyAllShell`,
   `agentPushNotifEnabled` and `workflowSizeGuideline` are *accepted* — they appear in 2.1.220's
   settings-key table, their values come from the binary's own enum/parser, and `claude doctor` reports
   no invalid settings — but their runtime effect was **not** observed: the workflow-size system
