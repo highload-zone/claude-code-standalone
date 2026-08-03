@@ -46,7 +46,7 @@ The container implements defense-in-depth:
 Claude Code configuration is pre-configured in the container:
 - `claude-config.json` - Main Claude configuration with all permissions enabled
 - `settings.local.json` - Local settings copied to `~/.claude/settings.local.json` (permissions allow/deny/ask)
-- `settings.json` - User settings copied to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `advisorModel: "opus"`, `autoUpdates: false`, `tui: "default"` (suppresses the fullscreen-renderer prompt), and the `statusLine` (must be in settings.json, not settings.local.json — that's where Claude Code reads it). Auto mode must be in user-home, not project scope
+- `settings.json` - User settings copied to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `autoMode.classifyAllShell: true`, `advisorModel: "opus"`, `agentPushNotifEnabled: true`, `workflowSizeGuideline: "small"`, `autoUpdates: false`, `tui: "default"` (suppresses the fullscreen-renderer prompt), and the `statusLine` (must be in settings.json, not settings.local.json — that's where Claude Code reads it). Auto mode must be in user-home, not project scope
 - All permissions are auto-accepted for jailfree operation mode
 
 ## Common Commands
@@ -249,6 +249,16 @@ prints a constant without loading the compiler; the build gate therefore also ru
 
 **Baked-in `ENV` (set in the Dockerfile, not via `.env`):**
 - `MCP_TIMEOUT=10000`, `ENABLE_EXPERIMENTAL_MCP_CLI=1`, `ENABLE_LSP_TOOL=1`
+- Runaway-fan-out budgets (all overridable from `.env` — `docker -e` wins over image `ENV`):
+  `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=12` (upstream default 20),
+  `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=100` and
+  `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION=100` (upstream default 200 each),
+  `CLAUDE_CODE_RETRY_WATCHDOG=1`. The concurrency number is derived from a measurement in
+  this image: 4 processes before `claude`, ~11 with `claude` + the four MCP servers, peaking
+  at 15 with three parallel Bash tool calls — so ~1-2 PIDs per in-flight tool call over an
+  ~11-PID floor, and the upstream 20 crowds the `--pids-limit=100` cgroup cap. **`0` does NOT
+  disable the session counters** — observed: with either counter set to `0` the action still
+  ran, i.e. `0` behaves as if the variable were unset. Use `1` for the tightest real limit.
 - `OPENSPEC_TELEMETRY=0` (disables OpenSpec telemetry at build and runtime)
 - `CODEGRAPH_NO_DOWNLOAD=1` (forbids CodeGraph's runtime binary download from GitHub Releases; binary must come from the npm registry)
 - `NODE_ENV=production`, plus security limits (`RLIMIT_CORE=0`, `RLIMIT_NOFILE=1024`, `YAMA_PTRACE_SCOPE=1`)
@@ -266,6 +276,28 @@ prints a constant without loading the compiler; the build gate therefore also ru
   API only). No-op if the main model outranks Opus (e.g. Fable).
 - `claude-config.json` still pre-approves tools for `/workspace` (`allow` rules + `mcp__*`); note auto
   mode drops blanket `Bash(*)`/`Agent` rules at runtime (the classifier takes over).
+- **`autoMode.classifyAllShell: true`** (in `settings.json`) — routes *every* Bash/PowerShell command
+  through the auto-mode classifier instead of only arbitrary-code-execution patterns. Upstream default
+  is `false`; enabled here because the agent runs unattended.
+- **`agentPushNotifEnabled: true`** (in `settings.json`) — lets Claude push proactively to the phone
+  when Remote Control is connected. Upstream default is `false`. Inert until Remote Control actually
+  establishes (see `CLAUDE_REMOTE_CONTROL`).
+- **`workflowSizeGuideline: "small"`** (in `settings.json`) — advisory guideline for how large Claude
+  makes dynamic workflows. Accepted values are `unrestricted` / `small` / `medium` / `large`; upstream
+  default is `medium`. Set to `small` to match this container's constrained fan-out budget — this is a
+  judgement call, not a hard limit, and is the one key here worth revisiting if workflows feel starved.
+- **Verification status of the four keys above.** Two are behaviourally verified. With
+  `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION=1` the second WebSearch is refused: "this session has
+  used its web search budget (1 of 1 WebSearch calls)". With `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=1`,
+  two of three parallel Agent calls are refused: "Concurrent subagent limit reached. You can run 1
+  subagents at once." `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION` was not exercised directly — it shares
+  the read path of the two that were. `CLAUDE_CODE_RETRY_WATCHDOG` is read through the boolean env
+  parser (`1/true/yes/on`). `autoMode.classifyAllShell`,
+  `agentPushNotifEnabled` and `workflowSizeGuideline` are *accepted* — they appear in 2.1.220's
+  settings-key table, their values come from the binary's own enum/parser, and `claude doctor` reports
+  no invalid settings — but their runtime effect was **not** observed: the workflow-size system
+  reminder is not injected in `-p`/headless runs, and `agentPushNotifEnabled` cannot do anything until
+  Remote Control actually connects (which needs `claude auth login`).
 - `alwaysThinkingEnabled: true`, `autoUpdates: false`
 - The `typescript-lsp@claude-plugins-official` plugin is enabled (works with `ENABLE_LSP_TOOL=1`)
 - The OAuth account is hard-coded in `claude-config.json` — replace it if using a different account
@@ -423,7 +455,7 @@ Inside the debug shell, you can run diagnostics manually:
 - `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:22 after editing package.json
 - `claude-config.json` - Claude Code configuration with all permissions
 - `settings.local.json` - Local Claude settings (permissions allow/deny/ask)
-- `settings.json` - User Claude settings baked to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `advisorModel: "opus"`, `autoUpdates: false`, `tui: "default"`, and the `statusLine` (wired to `/usr/local/bin/claude-statusline.sh`)
+- `settings.json` - User Claude settings baked to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `autoMode.classifyAllShell: true`, `advisorModel: "opus"`, `agentPushNotifEnabled: true`, `workflowSizeGuideline: "small"`, `autoUpdates: false`, `tui: "default"`, and the `statusLine` (wired to `/usr/local/bin/claude-statusline.sh`)
 - `statusline-command.sh` - Claude Code statusLine script (compact line: dir, git branch/dirty, model, duration, context %, 5h/7d rate limits); baked to `/usr/local/bin/claude-statusline.sh` (fixed, HOME-independent path). Deps (jq, git, awk, date, grep) are all present in the image
 - `mcp-servers.json` - Base MCP server configurations (always installed)
 - `mcp-servers-optional.json` - Optional MCP servers (require API keys)

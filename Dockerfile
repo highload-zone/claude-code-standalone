@@ -371,6 +371,31 @@ ENV MCP_TIMEOUT=10000 \
     ENABLE_EXPERIMENTAL_MCP_CLI=1 \
     ENABLE_LSP_TOOL=1
 
+# Runaway-fan-out budgets for an unattended agent in a --pids-limit=100 container.
+# All four are plain overrides of Claude Code defaults; pass a different value via
+# `.env` (docker -e wins over image ENV) to change them per run.
+#
+# CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS (upstream default 20) -> 12. Measured inside
+#   this image: 4 processes before `claude`, ~11 with `claude` + the four MCP servers
+#   attached, peaking at 15 with three parallel Bash tool calls — i.e. roughly 1-2 PIDs
+#   per in-flight tool call on top of an ~11-PID floor. At the upstream 20 a fan-out
+#   where every subagent holds a shell (plus pipelines) lands close enough to the
+#   100-PID cgroup limit that the container, not Claude Code, decides what fails. 12
+#   keeps ~40 PIDs of headroom.
+# CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION / _MAX_WEB_SEARCHES_PER_SESSION (default 200
+#   each) -> 100. Session-wide runaway-loop stops; these are cost/loop guards, not PID
+#   guards, so the number is a deliberately conservative choice rather than a measured
+#   ceiling. NOTE: 0 does NOT disable them — observed: with either counter set to 0 the
+#   action still ran, i.e. 0 behaves as if the variable were unset. Use 1 for the tightest
+#   real limit.
+# CLAUDE_CODE_RETRY_WATCHDOG=1 — boolean env (the parser accepts 1/true/yes/on).
+#   Upstream now caps CLAUDE_CODE_MAX_RETRIES at 15 and points unattended sessions at
+#   the watchdog instead; this image is exactly that unattended case.
+ENV CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=12 \
+    CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=100 \
+    CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION=100 \
+    CLAUDE_CODE_RETRY_WATCHDOG=1
+
 # Add security labels
 LABEL security.non-root=true \
       security.hardened=true \
