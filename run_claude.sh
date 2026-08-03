@@ -53,6 +53,10 @@ DOCKER_ARGS=(
   -v "$PROJECT_DIR:/workspace:rw"
   -w /workspace
   -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}"
+  # Remote Control is on by default in the entrypoint; name its sessions after the
+  # host project instead of the container's throwaway hostname. Only effective with
+  # a full-scope `claude auth login` token — see SECURITY.md.
+  -e "CLAUDE_REMOTE_CONTROL_PREFIX=${CLAUDE_REMOTE_CONTROL_PREFIX:-$(basename "$PROJECT_DIR")}"
 )
 
 # --- git commit identity from host (via env, not a gitconfig mount) ---

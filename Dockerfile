@@ -267,10 +267,22 @@ RUN npx -y github:JuliusBrussee/caveman#v1.9.1 --non-interactive --only claude -
 #   default). Re-adds the full bypass for isolated/throwaway containers where you
 #   accept no in-app safety checks. The flag is added only when the env var is set,
 #   so it is never a dead default.
-# --remote-control: OPT-IN via CLAUDE_REMOTE_CONTROL=1 (off by default). Remote
-#   Control requires a full-scope login token (`claude auth login`); the
-#   long-lived CLAUDE_CODE_OAUTH_TOKEN / `claude setup-token` this image uses is
-#   inference-only, so RC stays disabled with it.
+# --remote-control: ON BY DEFAULT (every session); opt out with
+#   CLAUDE_REMOTE_CONTROL=0. IMPORTANT — this flag only takes effect with a
+#   full-scope login token obtained by `claude auth login` INSIDE the container.
+#   The long-lived CLAUDE_CODE_OAUTH_TOKEN / `claude setup-token` this image
+#   normally runs with is inference-only, and `claude doctor` states it verbatim:
+#     "Remote Control requires a full-scope login token. Long-lived tokens (from
+#      claude setup-token or CLAUDE_CODE_OAUTH_TOKEN) are limited to
+#      inference-only for security reasons."
+#   So the flag is passed but inert under that auth. To avoid a silent dead knob
+#   the entrypoint says so at startup whenever CLAUDE_CODE_OAUTH_TOKEN is set.
+#   There is NO settings.json key that enables RC (only `disableRemoteControl`
+#   to turn it off), so the CLI flag is the only way to default it on.
+# --remote-control-session-name-prefix: RC session names default to the
+#   HOSTNAME, which in a container is a throwaway hex id. The prefix is taken
+#   from CLAUDE_REMOTE_CONTROL_PREFIX (the launchers pass the host project
+#   directory name) and falls back to `claude-box`.
 RUN echo '#!/bin/bash\n\
 set -e\n\
 # Runtime starts with --user $(id -u):$(id -g) to match host ownership of the rw\n\
@@ -298,9 +310,18 @@ if [ "${CLAUDE_BYPASS_PERMISSIONS:-0}" = "1" ]; then\n\
   EXTRA_ARGS="$EXTRA_ARGS --dangerously-skip-permissions"\n\
   mode_msg="permission mode: bypass (CLAUDE_BYPASS_PERMISSIONS=1 — no in-app safety checks)"\n\
 fi\n\
-if [ "${CLAUDE_REMOTE_CONTROL:-0}" = "1" ]; then\n\
-  EXTRA_ARGS="$EXTRA_ARGS --remote-control"\n\
-  mode_msg="$mode_msg; Remote Control requested (needs a full-scope login token; see SECURITY.md)"\n\
+if [ "${CLAUDE_REMOTE_CONTROL:-1}" != "0" ]; then\n\
+  # Session names are auto-generated as <prefix>-<random-words>; the CLI default\n\
+  # prefix is the hostname, useless in a container. Keep the prefix to characters\n\
+  # that are safe in a session name.\n\
+  rc_prefix="$(printf %s "${CLAUDE_REMOTE_CONTROL_PREFIX:-claude-box}" | tr -c "[:alnum:]._-" "-" | cut -c1-40)"\n\
+  [ -z "$rc_prefix" ] && rc_prefix="claude-box"\n\
+  EXTRA_ARGS="$EXTRA_ARGS --remote-control --remote-control-session-name-prefix $rc_prefix"\n\
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then\n\
+    mode_msg="$mode_msg; Remote Control requested (prefix: $rc_prefix) but INACTIVE — CLAUDE_CODE_OAUTH_TOKEN is inference-only. Run '"'"'claude auth login'"'"' in this container to use it, or set CLAUDE_REMOTE_CONTROL=0 to stop asking"\n\
+  else\n\
+    mode_msg="$mode_msg; Remote Control on (prefix: $rc_prefix)"\n\
+  fi\n\
 fi\n\
 echo "Starting Claude Code in $(pwd) — $mode_msg..."\n\
 exec claude $EXTRA_ARGS "$@"\n\

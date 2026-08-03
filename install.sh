@@ -180,6 +180,10 @@ args=(
   --tmpfs "/tmp:noexec,nosuid,size=100m"
   -v "$PWD:/workspace:rw"
   -w /workspace
+  # Remote Control is on by default in the entrypoint; name its sessions after the
+  # host project instead of the container's throwaway hostname. Only effective with
+  # a full-scope `claude auth login` token — see SECURITY.md.
+  -e "CLAUDE_REMOTE_CONTROL_PREFIX=${CLAUDE_REMOTE_CONTROL_PREFIX:-$(basename "$PWD")}"
 )
 
 if [ -f "$ENV_FILE" ]; then
