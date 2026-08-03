@@ -7,7 +7,7 @@ ARG USER_NAME=claude
 # dev tools) are NOT build args — they are pinned in tools/package.json and locked
 # in tools/package-lock.json (installed via `npm ci`). Change versions there.
 # RTK is a GitHub-release binary (not npm), so it keeps a version + sha256 arg.
-ARG RTK_VERSION=v0.42.4
+ARG RTK_VERSION=v0.44.2
 
 # Create non-root user with specific UID/GID.
 # Free the requested UID/GID if the base image already uses it (node:22 ships a
@@ -68,9 +68,9 @@ RUN DELTA_VERSION="0.19.2" && \
 # contains a single binary `rtk` placed in /usr/local/bin.
 RUN case "$TARGETARCH" in \
       amd64) RTK_ASSET="rtk-x86_64-unknown-linux-musl.tar.gz"; \
-             RTK_SHA256="34975116da11e09e502501daf758143e0b22ed3a42a10eb67fb693a6270d9e36";; \
+             RTK_SHA256="d94cc2a3e57fa534892b5235a726e7eeb7523f205a5f8f48f853bfcae7be7e33";; \
       arm64) RTK_ASSET="rtk-aarch64-unknown-linux-gnu.tar.gz"; \
-             RTK_SHA256="cc2b91c064eb670c097c184913c8fbcb1a943d53d7fe505375e96ba0c5b6459f";; \
+             RTK_SHA256="5cd3f7fa2697faf9e5b77a10ce4e699006e02d4752d792f06550697eb4b8e8a9";; \
       *) echo "unsupported TARGETARCH for RTK: $TARGETARCH" >&2; exit 1;; \
     esac && \
     curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/${RTK_ASSET}" -o /tmp/rtk.tar.gz && \
@@ -124,6 +124,13 @@ ENV CLAUDE_CODE_EXECUTABLE="/opt/toolchain/node_modules/.bin/claude"
 # (or `--help`) catches that at build time. codegraph uses `--help` (vendored Node
 # 24 binary; `--version` is undocumented); caveman-shrink prints usage on no-args.
 # dev tools: run `--version` (this is what catches an incompatible Node engine).
+# ts-node is the exception: `--version` only prints a constant and never touches
+# the TypeScript compiler API, so it stays green even when ts-node is completely
+# broken against the pinned `typescript` (observed with typescript 7.x, whose
+# native rewrite drops the JS API ts-node needs: `ts.sys` is undefined). It is
+# therefore gated by actually transpiling+running a typed snippet. `--compiler-options
+# module=commonjs` is required: with no tsconfig in scope the `-e` REPL emits an ESM
+# `export {}` that its own `vm.Script` (CJS) cannot parse.
 # MCP servers (mcp-server-sequential-thinking, perplexity-mcp) are stdio servers
 # that block on stdin if launched without a client — they CANNOT be run here
 # without hanging the build, so only check presence; their actual startup is
@@ -140,6 +147,7 @@ RUN claude --version && \
     prettier --version > /dev/null && \
     eslint --version > /dev/null && \
     ts-node --version > /dev/null && \
+    ts-node --compiler-options '{"module":"commonjs"}' -e 'const n: number = 1; if (n !== 1) process.exit(1)' && \
     command -v mcp-server-sequential-thinking perplexity-mcp > /dev/null && \
     command -v claude-agent-acp > /dev/null
 
@@ -223,7 +231,7 @@ RUN rtk init -g --auto-patch
 # Caveman: output-compression skill for Claude Code. For the `claude` provider
 # the installer uses the Claude Code plugin mechanism (`claude plugin marketplace
 # add` + `claude plugin install caveman@caveman`) and also wires hooks.
-# Pinned to tag v1.9.0 (non-interactive, claude only). NOTE: a commit-SHA ref
+# Pinned to tag v1.9.1 (non-interactive, claude only). NOTE: a commit-SHA ref
 # (`#a025122…`) would be more immutable, but `npx github:…#<40-char-sha>` fails
 # with "GitFetcher requires an Arborist constructor to pack a tarball" (npm git
 # fetcher limitation) — the tag ref is what actually installs. The tag's mutability
@@ -248,7 +256,7 @@ RUN rtk init -g --auto-patch
 # auth API); caveman's SessionStart/UserPromptSubmit hooks merge into the same
 # settings.json alongside RTK's PreToolUse hook. Not made best-effort so any
 # future failure stays visible.
-RUN npx -y github:JuliusBrussee/caveman#v1.9.0 --non-interactive --only claude --no-mcp-shrink
+RUN npx -y github:JuliusBrussee/caveman#v1.9.1 --non-interactive --only claude --no-mcp-shrink
 
 # Create simple startup script for runtime.
 # Permission mode: default is `auto` (set in ~/.claude/settings.json) — autonomous
