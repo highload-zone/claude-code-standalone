@@ -8,6 +8,12 @@ ARG USER_NAME=claude
 # in tools/package-lock.json (installed via `npm ci`). Change versions there.
 # RTK is a GitHub-release binary (not npm), so it keeps a version + sha256 arg.
 ARG RTK_VERSION=v0.44.2
+# codebase-memory-mcp is likewise installed from its GitHub release, NOT from its
+# npm package: that package is a 12 kB shim whose postinstall downloads the real
+# binary from GitHub Releases (outside npm's sha512 integrity), treats a missing
+# checksums.txt as non-fatal, and whose bin.js re-downloads on first run if the
+# binary is absent — i.e. an unverified runtime fetch. Pinned tag + sha256 here.
+ARG CBM_VERSION=v0.9.0
 
 # Create non-root user with specific UID/GID.
 # Free the requested UID/GID if the base image already uses it (node:22 ships a
@@ -80,6 +86,30 @@ RUN case "$TARGETARCH" in \
     chmod +x /usr/local/bin/rtk && \
     rm -f /tmp/rtk.tar.gz && \
     rtk --version
+
+# Install codebase-memory-mcp from GitHub releases — per-arch, sha256-pinned.
+# The `-portable` Linux asset is the fully-static build; the plain `linux-*` one
+# dynamically links glibc >= 2.38 (trixie has 2.41, so both would work — static is
+# taken for the same reason RTK amd64 uses musl: no libc coupling). If you bump
+# CBM_VERSION you MUST refresh both sha256 values (checked against the release's
+# own checksums.txt AND against the downloaded bytes). The archive contains the
+# binary at its root plus LICENSE/THIRD_PARTY_NOTICES/install.sh — only the binary
+# is kept. NOTE: it is ~258 MB (159 vendored tree-sitter grammars + a vendored
+# embedding model), which dominates this layer's size.
+RUN case "$TARGETARCH" in \
+      amd64) CBM_ASSET="codebase-memory-mcp-linux-amd64-portable.tar.gz"; \
+             CBM_SHA256="8459d5c9d1457f2c82de3de307ffc7641ecbba2dde893427be1e62eca8ef9b25";; \
+      arm64) CBM_ASSET="codebase-memory-mcp-linux-arm64-portable.tar.gz"; \
+             CBM_SHA256="b0a43fdaf534073c16707d72726b73b149d4c1212034b281ee8b7b2dac755107";; \
+      *) echo "unsupported TARGETARCH for codebase-memory-mcp: $TARGETARCH" >&2; exit 1;; \
+    esac && \
+    curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/${CBM_VERSION}/${CBM_ASSET}" -o /tmp/cbm.tar.gz && \
+    echo "${CBM_SHA256}  /tmp/cbm.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/cbm.tar.gz -C /tmp codebase-memory-mcp && \
+    mv /tmp/codebase-memory-mcp /usr/local/bin/codebase-memory-mcp && \
+    chmod +x /usr/local/bin/codebase-memory-mcp && \
+    rm -f /tmp/cbm.tar.gz && \
+    codebase-memory-mcp --version
 
 # ============================================================================
 # Toolchain: ALL global npm CLIs, locked + integrity-verified via `npm ci`

@@ -91,8 +91,9 @@ may be root. Consequently:
   exfiltrate code via egress. Residual risk is **Medium** with a scoped deploy key (below). **Use on
   trusted projects only** and review what the agent commits.
 - **Third-party trust.** RTK's `PreToolUse` hook rewrites every Bash command (compromise = injection
-  into every shell call); CodeGraph ships an opaque vendored binary. Both are version/checksum
-  pinned, but auditing them is the operator's responsibility.
+  into every shell call); CodeGraph and codebase-memory-mcp ship opaque vendored binaries (the
+  latter ~258 MB, with tree-sitter grammars and an embedding model compiled in). All are
+  version/checksum pinned, but auditing them is the operator's responsibility.
 
 ## Read-write agent mode (single mode)
 
@@ -146,12 +147,22 @@ compromised and rotate it immediately.
 
 - All npm CLIs are installed via `npm ci` from a committed `tools/package-lock.json` with sha512
   integrity hashes; versions are exact (no floating ranges).
-- GitHub-release binaries (`rtk`, `git-delta`) are sha256-verified during build.
+- GitHub-release binaries (`rtk`, `git-delta`, `codebase-memory-mcp`) are sha256-verified during
+  build. `codebase-memory-mcp` is deliberately **not** taken from its npm package: that package is a
+  shim whose `postinstall` downloads the binary from GitHub Releases outside npm's integrity check,
+  silently skips verification when `checksums.txt` cannot be fetched, and whose `bin.js` re-downloads
+  the binary on first run if it is missing — an unverified runtime fetch inside the container. The
+  pinned-tag + sha256 `curl` in the Dockerfile closes that path.
 - Residual gaps (documented, not yet closed): the caveman installer clones its marketplace repo at
-  default-branch HEAD (build-reproducibility gap, not a runtime hole), and `npm ci` does not
-  neutralize postinstall network fetchers in transitive dependencies.
-- Known transitive advisories (`npm audit`): the toolchain ships with `form-data` and `hono`
-  patched (`npm audit fix --package-lock-only`, no top-level pin drift). Two high-severity
+  default-branch HEAD (build-reproducibility gap, not a runtime hole); `npm ci` does not
+  neutralize postinstall network fetchers in transitive dependencies; and `codebase-memory-mcp`
+  carries a manual `update` subcommand (source overridable via `CBM_DOWNLOAD_URL`) with no
+  equivalent of `CODEGRAPH_NO_DOWNLOAD` to forbid it — nothing in this image invokes it, but an
+  agent with shell access could. Upstream's "zero network requests" claim is not independently
+  verified here.
+- Known transitive advisories (`npm audit`): the toolchain ships with `form-data`, `hono` and
+  `ip-address` (≥10.4.0, three high-severity SSRF/trust-boundary advisories) patched
+  (`npm audit fix --package-lock-only`, no top-level pin drift). Two high-severity
   advisories remain in `@modelcontextprotocol/sdk` (≤1.25.1), pulled in transitively by
   `perplexity-mcp@0.2.3` (the latest release, which pins the old SDK) — upstream marks both
   "no fix available." Applicability in this image is limited: the DNS-rebinding advisory

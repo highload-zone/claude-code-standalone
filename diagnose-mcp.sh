@@ -7,7 +7,7 @@ echo ""
 
 echo "1. Checking pre-installed MCP server binaries (no runtime installs)..."
 echo "-----------------------------------"
-for bin in mcp-server-sequential-thinking perplexity-mcp codegraph caveman-shrink; do
+for bin in mcp-server-sequential-thinking perplexity-mcp codegraph caveman-shrink codebase-memory-mcp; do
     if command -v "$bin" &> /dev/null; then
         echo "✅ $bin -> $(command -v "$bin")"
     else

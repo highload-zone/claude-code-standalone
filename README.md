@@ -169,8 +169,9 @@ Opus (e.g. `--model fable`, where an Opus advisor is rejected).
 - **Remote Control** opens an outbound control channel (entrypoint default).
 - **Resource limits:** only `--pids-limit` is enforced; the `RLIMIT_*`/`YAMA` env vars in the image
   are not effective by themselves.
-- **Third-party tools:** RTK's `PreToolUse` hook rewrites every Bash command; CodeGraph ships a
-  vendored prebuilt binary; caveman is a Claude Code plugin. All pinned, but third-party trust.
+- **Third-party tools:** RTK's `PreToolUse` hook rewrites every Bash command; CodeGraph and
+  codebase-memory-mcp ship vendored prebuilt binaries; caveman is a Claude Code plugin. All pinned,
+  but third-party trust.
 
 ## What's inside
 
@@ -179,15 +180,18 @@ Base: `node:22-trixie-slim` (Node 22 LTS, Debian 13 / glibc 2.41). Multi-arch (a
 Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
 integrity, exact versions):
 
-- `@anthropic-ai/claude-code` (2.1.220), `@fission-ai/openspec` (1.7.0)
+- `@anthropic-ai/claude-code` (2.1.221), `@fission-ai/openspec` (1.7.0)
 - `@agentclientprotocol/claude-agent-acp` (0.64.2) — ACP adapter for IDE use (Zed); reuses
   the pinned `claude` binary via `CLAUDE_CODE_EXECUTABLE`
 - `@colbymchenry/codegraph` (1.5.0, MCP) wrapped by `caveman-shrink` (0.1.0)
-- MCP servers: `sequential-thinking`, `context7` (HTTP), `perplexity`
+- MCP servers: `sequential-thinking`, `context7` (HTTP), `perplexity`, `codebase-memory-mcp`
+  (GitHub-release binary, see below)
 - caveman skill (plugin, tag `v1.9.1`)
 - Dev tools: `pnpm` 11.18.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.9.6, `eslint` 10.8.0
 
-GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.44.2), `git-delta` (0.19.2).
+GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.44.2), `git-delta` (0.19.2),
+`codebase-memory-mcp` (v0.9.0, MCP — a ~258 MB static binary; installed from the release, not from
+its npm shim, which would download the binary unverified at install/first run).
 CLI utilities: `jq`, `ripgrep`, `fd`, `tree`, `fzf`, `mc`, `gnupg`.
 
 See [CLAUDE.md](./CLAUDE.md) for the full architecture and per-component details.
