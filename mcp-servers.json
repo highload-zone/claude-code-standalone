@@ -4,6 +4,11 @@
     "command": "caveman-shrink",
     "args": ["codegraph", "serve", "--mcp"]
   },
+  "codebase-memory-mcp": {
+    "type": "stdio",
+    "command": "codebase-memory-mcp",
+    "args": []
+  },
   "sequential-thinking": {
     "command": "mcp-server-sequential-thinking",
     "args": []

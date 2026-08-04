@@ -5,7 +5,8 @@ name: Docker build & publish
 # secrets). On pull_request it only BUILDS (verification, no push); on push to
 # main and on version tags it PUBLISHES to ghcr.io/<owner>/<repo>.
 #
-# Supported archs are limited by RTK (x86_64-musl, aarch64-gnu) → amd64 + arm64.
+# Supported archs are limited by the GitHub-release binaries → amd64 + arm64:
+# RTK (x86_64-musl, aarch64-gnu) and codebase-memory-mcp (linux amd64/arm64 only).
 # Each arch builds natively on its own runner, then digests are merged into one
 # manifest (no QEMU). RTK arm64 is gnu-linked and needs glibc >= 2.39 (Debian
 # trixie base provides 2.41).
