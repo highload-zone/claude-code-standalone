@@ -20,6 +20,10 @@
       "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
     }
   },
+  "cloudflare-docs": {
+    "type": "http",
+    "url": "https://stack.mcp.cloudflare.com/mcp?libs=cloudflare,cloudflare-api,cloudflare-blog,cloudflare-community,vite,vitest"
+  },
   "perplexity": {
     "command": "perplexity-mcp",
     "args": [],

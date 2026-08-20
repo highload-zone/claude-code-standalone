@@ -19,8 +19,10 @@
   "firstStartTime": "2025-08-18T19:55:22.726Z",
   "userID": "docker-user",
   "projects": {
-    "/workspace": {
-      "allowedTools": ["*"],
+    "/workspace/project": {
+      "allowedTools": [
+        "*"
+      ],
       "permissions": {
         "allow": [
           "Bash(*)",
@@ -37,15 +39,19 @@
           "NotebookWrite(*)",
           "mcp__*"
         ],
-        "additionalDirectories": ["/workspace/input", "/workspace/output", "/workspace/data", "/workspace/temp"]
+        "additionalDirectories": [
+          "/workspace/project/input",
+          "/workspace/project/output",
+          "/workspace/project/data",
+          "/workspace/project/temp"
+        ]
       },
       "hasCompletedProjectOnboarding": true,
       "hasClaudeMdExternalIncludesApproved": false,
       "hasClaudeMdExternalIncludesWarningShown": false,
       "history": [],
       "mcpContextUris": [],
-      "mcpServers": {
-      },
+      "mcpServers": {},
       "enabledMcpjsonServers": [],
       "disabledMcpjsonServers": [],
       "hasTrustDialogAccepted": true,

@@ -7,13 +7,13 @@ ARG USER_NAME=claude
 # dev tools) are NOT build args — they are pinned in tools/package.json and locked
 # in tools/package-lock.json (installed via `npm ci`). Change versions there.
 # RTK is a GitHub-release binary (not npm), so it keeps a version + sha256 arg.
-ARG RTK_VERSION=v0.44.2
+ARG RTK_VERSION=v0.45.0
 # codebase-memory-mcp is likewise installed from its GitHub release, NOT from its
 # npm package: that package is a 12 kB shim whose postinstall downloads the real
 # binary from GitHub Releases (outside npm's sha512 integrity), treats a missing
 # checksums.txt as non-fatal, and whose bin.js re-downloads on first run if the
 # binary is absent — i.e. an unverified runtime fetch. Pinned tag + sha256 here.
-ARG CBM_VERSION=v0.9.0
+ARG CBM_VERSION=v0.10.8
 
 # Create non-root user with specific UID/GID.
 # Free the requested UID/GID if the base image already uses it (node:22 ships a
@@ -74,9 +74,9 @@ RUN DELTA_VERSION="0.19.2" && \
 # contains a single binary `rtk` placed in /usr/local/bin.
 RUN case "$TARGETARCH" in \
       amd64) RTK_ASSET="rtk-x86_64-unknown-linux-musl.tar.gz"; \
-             RTK_SHA256="d94cc2a3e57fa534892b5235a726e7eeb7523f205a5f8f48f853bfcae7be7e33";; \
+             RTK_SHA256="c4c036fbf181fc55ef329786c8c17e0d427972b053b825944d968a6aafef1ba4";; \
       arm64) RTK_ASSET="rtk-aarch64-unknown-linux-gnu.tar.gz"; \
-             RTK_SHA256="5cd3f7fa2697faf9e5b77a10ce4e699006e02d4752d792f06550697eb4b8e8a9";; \
+             RTK_SHA256="80a746dd305ef944ff50ef011ae4ce3878dd5ba88dfe35d859d05498191637c3";; \
       *) echo "unsupported TARGETARCH for RTK: $TARGETARCH" >&2; exit 1;; \
     esac && \
     curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/${RTK_ASSET}" -o /tmp/rtk.tar.gz && \
@@ -98,9 +98,9 @@ RUN case "$TARGETARCH" in \
 # embedding model), which dominates this layer's size.
 RUN case "$TARGETARCH" in \
       amd64) CBM_ASSET="codebase-memory-mcp-linux-amd64-portable.tar.gz"; \
-             CBM_SHA256="8459d5c9d1457f2c82de3de307ffc7641ecbba2dde893427be1e62eca8ef9b25";; \
+             CBM_SHA256="6eef49652bc0c7820f43114125044d40bf7f4d97c11b2592f6b0f6a307702325";; \
       arm64) CBM_ASSET="codebase-memory-mcp-linux-arm64-portable.tar.gz"; \
-             CBM_SHA256="b0a43fdaf534073c16707d72726b73b149d4c1212034b281ee8b7b2dac755107";; \
+             CBM_SHA256="5697d986d9716c913163b4bff7b3a294287f3b843e993bc1ff71e78dcdc21781";; \
       *) echo "unsupported TARGETARCH for codebase-memory-mcp: $TARGETARCH" >&2; exit 1;; \
     esac && \
     curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/${CBM_VERSION}/${CBM_ASSET}" -o /tmp/cbm.tar.gz && \
@@ -140,14 +140,6 @@ RUN cd /opt/toolchain && \
     npm ci --no-audit --no-fund && \
     npm cache clean --force
 ENV PATH="/opt/toolchain/node_modules/.bin:${PATH}"
-# claude-agent-acp (the ACP adapter, see start-acp.sh) is powered by
-# @anthropic-ai/claude-agent-sdk, which spawns a Claude Code binary. By default
-# the SDK would resolve its OWN bundled optionalDependency binary
-# (@anthropic-ai/claude-agent-sdk-linux-<arch>); point it at our already-pinned
-# `claude` instead so the ACP path reuses the same audited Claude Code (no second
-# Claude binary executed at runtime). Verified from ACP source (src/utils.ts):
-# CLAUDE_CODE_EXECUTABLE takes precedence over the SDK's resolved binary.
-ENV CLAUDE_CODE_EXECUTABLE="/opt/toolchain/node_modules/.bin/claude"
 # Verify the locked CLIs actually RUN on this base's Node (not just resolve on
 # PATH) — a pinned version may declare a Node engine this base doesn't satisfy
 # (e.g. pnpm 11 needs Node >=22.13; the base is node:22 which satisfies it). Running each `--version`
@@ -165,9 +157,6 @@ ENV CLAUDE_CODE_EXECUTABLE="/opt/toolchain/node_modules/.bin/claude"
 # that block on stdin if launched without a client — they CANNOT be run here
 # without hanging the build, so only check presence; their actual startup is
 # verified at runtime via `claude mcp list`.
-# claude-agent-acp (the Zed/IDE ACP adapter) is likewise an stdio server: run
-# with no args it calls process.stdin.resume() and blocks forever (verified from
-# src/index.ts). Presence-only here; its handshake is verified at runtime.
 RUN claude --version && \
     openspec --version && \
     codegraph --help > /dev/null && \
@@ -178,8 +167,7 @@ RUN claude --version && \
     eslint --version > /dev/null && \
     ts-node --version > /dev/null && \
     ts-node --compiler-options '{"module":"commonjs"}' -e 'const n: number = 1; if (n !== 1) process.exit(1)' && \
-    command -v mcp-server-sequential-thinking perplexity-mcp > /dev/null && \
-    command -v claude-agent-acp > /dev/null
+    command -v mcp-server-sequential-thinking perplexity-mcp > /dev/null
 
 # ============================================================================
 # MCP Servers Cache Layer
@@ -195,10 +183,18 @@ RUN chmod +x /app/install-mcp-servers.sh /app/diagnose-mcp.sh
 
 ################# <--- Configure MCP Providers
 
-# Single read-write mode: the project is bind-mounted at /workspace at runtime
-# (no separate input/output dirs). Just ensure the mount point exists and is
-# world-writable (the runtime --user owns the bind-mounted project itself).
-RUN mkdir -p /workspace && chmod 777 /workspace
+# Single read-write mode: the project is bind-mounted at /workspace/project at
+# runtime (no separate input/output dirs). Just ensure the mount point exists and
+# is world-writable (the runtime --user owns the bind-mounted project itself).
+#
+# Why one level down and not /workspace itself: codebase-memory-mcp refuses to
+# index any first-level path as a root ("path is too broad to index as one root")
+# since v0.10.0 — see src/foundation/workspace.{c,h} from upstream PR #1464, which
+# rejects a candidate root less than two components below the volume. The refusal
+# cannot be lifted: `allow-root /workspace` answers "refused", and
+# --approve-sensitive does not apply to it. Mounting one level down keeps the
+# project indexable while /workspace stays as the CBM_ALLOWED_ROOT boundary.
+RUN mkdir -p /workspace/project && chmod 777 /workspace /workspace/project
 
 # Bake the Claude config into the build user's HOME (/home/claude). At runtime the
 # container is started with --user $(id -u):$(id -g) to match host file ownership
@@ -237,11 +233,11 @@ RUN git config --global core.pager delta && \
     git config --global delta.side-by-side true
 
 # ============================================================================
-# Initialize OpenSpec into the build HOME (NOT /workspace — that is overlaid by
-# the rw project mount at runtime). This bakes the Claude Code integration
+# Initialize OpenSpec into the build HOME (NOT the project mount — that is
+# overlaid at runtime). This bakes the Claude Code integration
 # (~/.claude/commands/opsx + skills) which the entrypoint copies into the runtime
 # HOME, so the opsx slash-commands are available. `openspec init` in an actual
-# project is still run on demand by the agent inside the rw /workspace.
+# project is still run on demand by the agent inside the rw /workspace/project.
 # Telemetry opt-out via OPENSPEC_TELEMETRY (no telemetry.enabled config key).
 ENV OPENSPEC_TELEMETRY=0
 RUN openspec init "/home/${USER_NAME}" --tools claude --force
@@ -257,6 +253,18 @@ RUN openspec init "/home/${USER_NAME}" --tools claude --force
 # Verified by build+run: `rtk 0.42.0` runs; the PreToolUse/Bash hook is present
 # and is NOT clobbered by the caveman layer that writes the same settings.json.
 RUN rtk init -g --auto-patch
+
+# codebase-memory-mcp: turn OFF the built-in graph UI. Since v0.10.0 the binary
+# ships an HTTP server for a 3D graph view and `ui_enabled` defaults to **true**,
+# so the coordination daemon binds 127.0.0.1:9749 on the first MCP session —
+# measured, and contrary to the upstream README, which documents the UI as needing
+# an explicit `--ui=true --port=9749`. A hardened image should not carry an
+# undocumented listening socket, the less so because POST /api/index on it drives
+# indexing. The setting is stored in $CBM_CACHE_DIR/_config.db, i.e. under
+# /home/claude/.cache, which the entrypoint copies into the runtime tmpfs HOME —
+# so baking it here survives container start.
+RUN codebase-memory-mcp config set ui_enabled false && \
+    codebase-memory-mcp config list
 
 # Caveman: output-compression skill for Claude Code. For the `claude` provider
 # the installer uses the Claude Code plugin mechanism (`claude plugin marketplace
@@ -281,11 +289,27 @@ RUN rtk init -g --auto-patch
 # fetch anything at runtime (skill + hooks are baked into the image), so this is a
 # build-reproducibility gap, not a runtime supply-chain hole.
 #
-# Verified by build: both plugin steps succeed at build time — `marketplace add`
+# Verified by build+run: both plugin steps succeed at build time — `marketplace add`
 # is a public HTTPS clone and `plugin install` is a local copy (neither hits the
-# auth API); caveman's SessionStart/UserPromptSubmit hooks merge into the same
-# settings.json alongside RTK's PreToolUse hook. Not made best-effort so any
-# future failure stays visible.
+# auth API). The hooks come from the PLUGIN MANIFEST, not from settings.json:
+# measured in the built image, `.hooks.SessionStart` and `.hooks.UserPromptSubmit`
+# are empty and `.hooks.PreToolUse` holds only RTK's `rtk hook claude` — i.e. the
+# caveman layer does not clobber RTK's hook, and `.statusLine` survives too. Not
+# made best-effort so any future failure stays visible.
+#
+# HELD AT v1.9.1 — do NOT bump to v2.x without re-doing this analysis. Measured
+# against v2.2.0:
+#   - v2.2.0 adds a runtime dependency `@caveman-ai/cli: ^1.1.0`, which ships its
+#     own `caveman` bin. That bin SHADOWS the installer's own `caveman` bin under
+#     npx, so `npx -y github:JuliusBrussee/caveman#v2.2.0 --non-interactive …`
+#     does not run bin/install.js at all — it runs the cloud CLI, which answers
+#     `unknown command "--non-interactive"`. The installer script itself is
+#     unchanged and still accepts the flags; it is simply unreachable this way.
+#   - that dependency is a FLOATING range (`^1.1.0`) in a build layer, which this
+#     image's exact-pin policy does not accept, and `@caveman-ai/cli` is an
+#     account/cloud CLI whose compression runs in "companion Go binaries" fetched
+#     by `caveman setup` — a runtime download this image forbids.
+# v1.9.1 has no dependencies at all, which is why it stays.
 RUN npx -y github:JuliusBrussee/caveman#v1.9.1 --non-interactive --only claude --no-mcp-shrink
 
 # Create simple startup script for runtime.
@@ -333,7 +357,7 @@ for d in agents commands skills; do\n\
     cp -a "/host-claude/$d/." "$HOME/.claude/$d/" 2>/dev/null || true\n\
   fi\n\
 done\n\
-cd /workspace 2>/dev/null || cd "$HOME"\n\
+cd /workspace/project 2>/dev/null || cd "$HOME"\n\
 EXTRA_ARGS=""\n\
 mode_msg="permission mode: auto (default; falls back to default mode if auto is unavailable)"\n\
 if [ "${CLAUDE_BYPASS_PERMISSIONS:-0}" = "1" ]; then\n\
@@ -358,29 +382,6 @@ exec claude $EXTRA_ARGS "$@"\n\
 ' > /home/${USER_NAME}/start-claude.sh \
     && chmod +x /home/${USER_NAME}/start-claude.sh
 
-# ACP entrypoint for IDE use (Zed and other ACP clients), selected by run_acp.sh
-# via --entrypoint. claude-agent-acp speaks the Agent Client Protocol over stdio:
-# the editor launches this as a subprocess and exchanges JSON-RPC on stdin/stdout.
-# CRITICAL: stdout is the protocol channel — it must carry ONLY JSON-RPC. Every
-# diagnostic here goes to stderr (>&2) or the ACP session is corrupted. We do NOT
-# pass --remote-control/--dangerously-skip-permissions (those are `claude`-only
-# flags the acp bin ignores); in ACP mode tool-call permissions are gated by the
-# editor UI (a human approves), so this path is *less* permissive than the claude
-# entrypoint (see SECURITY.md). The same HOME-copy as start-claude.sh runs so the
-# baked agent state (config, MCP, opsx) is present under the writable runtime HOME.
-RUN echo '#!/bin/bash\n\
-set -e\n\
-# stdout is reserved for ACP JSON-RPC — send all diagnostics to stderr.\n\
-export HOME="${HOME:-/home/agent}"\n\
-if [ "$HOME" != "/home/claude" ] && [ ! -e "$HOME/.claude.json" ]; then\n\
-  mkdir -p "$HOME"\n\
-  cp -a /home/claude/. "$HOME/" 2>/dev/null || true\n\
-fi\n\
-echo "Starting claude-agent-acp (ACP stdio) in $(pwd)..." >&2\n\
-exec claude-agent-acp "$@"\n\
-' > /home/${USER_NAME}/start-acp.sh \
-    && chmod +x /home/${USER_NAME}/start-acp.sh
-
 # Make the baked HOME world-readable so the runtime --user (a different uid than
 # the build user) can copy it into its writable HOME (see start-claude.sh).
 RUN chmod -R a+rX /home/${USER_NAME}
@@ -397,9 +398,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
     # Prevent ptrace (debugging other processes)
     YAMA_PTRACE_SCOPE=1
 
+# CBM_ALLOWED_ROOT confines codebase-memory-mcp's indexing to the project mount:
+# an index_repository whose repo_path resolves (after symlink / `..` resolution)
+# outside this root is refused, and upstream applies the same check to the graph
+# UI's POST /api/index route. Every entrypoint mounts the project at
+# /workspace/project (run_claude.sh, debug-shell.sh, the claude-box launcher from
+# install.sh, and the Dev Container), so /workspace is the correct boundary.
+# NOTE: CBM_CACHE_DIR stays unset on purpose — writing an index directory into the
+# user's repo is not this container's business (see CLAUDE.md).
 ENV MCP_TIMEOUT=10000 \
     ENABLE_EXPERIMENTAL_MCP_CLI=1 \
-    ENABLE_LSP_TOOL=1
+    ENABLE_LSP_TOOL=1 \
+    CBM_ALLOWED_ROOT=/workspace
 
 # Runaway-fan-out budgets for an unattended agent in a --pids-limit=100 container.
 # All four are plain overrides of Claude Code defaults; pass a different value via

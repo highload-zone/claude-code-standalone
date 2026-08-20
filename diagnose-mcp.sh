@@ -27,10 +27,10 @@ if [ -f "$HOME/.claude.json" ]; then
     echo "Claude config exists at $HOME/.claude.json"
     echo ""
     echo "MCP Servers configured:"
-    cat "$HOME/.claude.json" | jq -r '.projects["/workspace"].mcpServers | keys[]' 2>&1 || echo "Failed to parse JSON"
+    cat "$HOME/.claude.json" | jq -r '.projects["/workspace/project"].mcpServers | keys[]' 2>&1 || echo "Failed to parse JSON"
     echo ""
     echo "Full MCP server configuration:"
-    cat "$HOME/.claude.json" | jq '.projects["/workspace"].mcpServers' 2>&1 || echo "Failed to get MCP config"
+    cat "$HOME/.claude.json" | jq '.projects["/workspace/project"].mcpServers' 2>&1 || echo "Failed to get MCP config"
 else
     echo "❌ $HOME/.claude.json not found"
 fi

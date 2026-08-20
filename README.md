@@ -70,7 +70,7 @@ docker run -it --rm \
   --user "$(id -u):$(id -g)" \
   --tmpfs /home/agent:exec,mode=1777,size=512m -e HOME=/home/agent \
   --tmpfs /tmp:noexec,nosuid,size=100m \
-  -v "$PWD:/workspace:rw" -w /workspace \
+  -v "$PWD:/workspace/project:rw" -w /workspace/project \
   --env-file ~/.config/claude-standalone/claude.env \
   ghcr.io/highload-zone/claude-code-standalone:latest
 ```
@@ -162,10 +162,10 @@ Opus (e.g. `--model fable`, where an Opus advisor is rejected).
 - **The agent has full read-write access to your project** (edit, commit, push) and runs autonomously
   with skipped permissions. Use on **trusted projects**. A prompt injection in the project code can
   drive the agent. Residual risk is Medium with a scoped deploy key for push (below).
-- **Network:** bridge mode blocks the *host* network but allows **outbound internet**. `context7` and
-  `perplexity` MCP servers send data (incl. code context) to third parties — an exfiltration channel.
-  No egress allowlist (cap-drop=ALL prevents in-container iptables); restrict at the Docker-network/
-  daemon level or remove those MCP servers.
+- **Network:** bridge mode blocks the *host* network but allows **outbound internet**. The `context7`,
+  `cloudflare-docs` and `perplexity` MCP servers send data (incl. code context) to third parties — an
+  exfiltration channel. No egress allowlist (cap-drop=ALL prevents in-container iptables); restrict at
+  the Docker-network/daemon level or remove those MCP servers.
 - **Remote Control** opens an outbound control channel (entrypoint default).
 - **Resource limits:** only `--pids-limit` is enforced; the `RLIMIT_*`/`YAMA` env vars in the image
   are not effective by themselves.
@@ -180,17 +180,15 @@ Base: `node:22-trixie-slim` (Node 22 LTS, Debian 13 / glibc 2.41). Multi-arch (a
 Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
 integrity, exact versions):
 
-- `@anthropic-ai/claude-code` (2.1.221), `@fission-ai/openspec` (1.7.0)
-- `@agentclientprotocol/claude-agent-acp` (0.64.2) — ACP adapter for IDE use (Zed); reuses
-  the pinned `claude` binary via `CLAUDE_CODE_EXECUTABLE`
+- `@anthropic-ai/claude-code` (2.1.238), `@fission-ai/openspec` (1.10.0)
 - `@colbymchenry/codegraph` (1.5.0, MCP) wrapped by `caveman-shrink` (0.1.0)
-- MCP servers: `sequential-thinking`, `context7` (HTTP), `perplexity`, `codebase-memory-mcp`
-  (GitHub-release binary, see below)
+- MCP servers: `sequential-thinking`, `context7` (HTTP), `cloudflare-docs` (HTTP, no API key),
+  `perplexity`, `codebase-memory-mcp` (GitHub-release binary, see below)
 - caveman skill (plugin, tag `v1.9.1`)
-- Dev tools: `pnpm` 11.18.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.9.6, `eslint` 10.8.0
+- Dev tools: `pnpm` 11.22.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.9.6, `eslint` 10.8.1
 
-GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.44.2), `git-delta` (0.19.2),
-`codebase-memory-mcp` (v0.9.0, MCP — a ~258 MB static binary; installed from the release, not from
+GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.45.0), `git-delta` (0.19.2),
+`codebase-memory-mcp` (v0.10.8, MCP — a ~280 MB static binary; installed from the release, not from
 its npm shim, which would download the binary unverified at install/first run).
 CLI utilities: `jq`, `ripgrep`, `fd`, `tree`, `fzf`, `mc`, `gnupg`.
 
@@ -200,7 +198,7 @@ See [CLAUDE.md](./CLAUDE.md) for the full architecture and per-component details
 
 - Docker
 - A Claude Code OAuth token (`claude setup-token`)
-- (optional) Context7 / Perplexity API keys for those MCP servers
+- (optional) Context7 / Perplexity API keys for those MCP servers (`cloudflare-docs` needs none)
 - (optional) a scoped git deploy key if you want the agent to `git push`
 
 ## Setup
@@ -247,12 +245,11 @@ From your project directory:
 ```bash
 ./run_claude.sh                 # autonomous Claude Code agent over the current dir (read-write)
 ./run_claude.sh --model opus    # pass-through Claude Code args
-./run_acp.sh                    # expose the container as an ACP agent for an IDE (Zed) — see below
 ./debug-shell.sh                # bash shell inside the container
 ./run-diagnostics.sh            # MCP server diagnostics
 ```
 
-The current directory is mounted **read-write at `/workspace`** and the container runs as your host
+The current directory is mounted **read-write at `/workspace/project`** and the container runs as your host
 user, so the agent can edit, commit, and push. To enable `git push`, point `DEPLOY_KEY` at a
 **scoped** repo deploy key (mounted read-only, used with `IdentitiesOnly` — the agent can push only
 to that repo and cannot ssh elsewhere):
@@ -265,46 +262,17 @@ export DEPLOY_KEY=/path/to/repo_deploy_key
 Without `DEPLOY_KEY`, edit + local commit work; push does not. Git commit identity is taken from your
 host `git config` (passed as env), so commits are attributed to you.
 
-## Use from an IDE (Zed / ACP)
-
-`run_acp.sh` exposes the container as an [Agent Client Protocol](https://agentclientprotocol.com)
-agent (`@agentclientprotocol/claude-agent-acp`), which ACP-compatible editors like
-[Zed](https://zed.dev/docs/ai/external-agents) launch and drive over **stdio**. The editor speaks
-JSON-RPC to the in-container agent; tool calls (edits, commands) surface as **permission requests in
-the editor UI** — a human approves them, so this path is *less* permissive than the autonomous
-`run_claude.sh` entrypoint.
-
-Two things make it work and differ from `run_claude.sh`:
-
-- **stdio, not a TTY** (`docker run -i`). stdout carries only JSON-RPC; the wrapper prints all
-  diagnostics to stderr.
-- **Path coherence.** Zed sends host-absolute paths (cwd, `@`-mentions, diffs), so the project is
-  mounted at the **identical absolute path** (`-v "$PWD:$PWD" -w "$PWD"`), not at `/workspace`.
-
-Add this to Zed's `settings.json` (`~/.config/zed/settings.json`), using the **absolute** path to
-`run_acp.sh` and running Zed from your project directory (the wrapper mounts `$PWD`):
-
-```json
-{
-  "agent_servers": {
-    "Claude (container)": {
-      "command": "/absolute/path/to/claude-standalone/run_acp.sh",
-      "args": [],
-      "env": {}
-    }
-  }
-}
-```
-
-Then pick "Claude (container)" in Zed's agent panel. Auth uses the same `CLAUDE_CODE_OAUTH_TOKEN`
-from your `.env`/host env as the other modes (the ACP adapter delegates to the pinned `claude`
-binary via `CLAUDE_CODE_EXECUTABLE`). `git push` works the same way via `DEPLOY_KEY`.
+> **The in-container path changed from `/workspace` to `/workspace/project`.** `codebase-memory-mcp`
+> refuses to index any first-level path as a root since its v0.10.0 (upstream PR #1464 — the refusal
+> exists to stop an accidental `index_repository` on `~` or `/`, and cannot be lifted with
+> `allow-root`). Mounting one level down keeps the code-intelligence graph working, and `/workspace`
+> is now the `CBM_ALLOWED_ROOT` boundary. If you scripted anything against the old path, update it.
 
 ## Dev Container
 
 `.devcontainer/devcontainer.json` opens your project **inside** the hardened image as an interactive
 development environment (VS Code Dev Containers, JetBrains Gateway, GitHub Codespaces, or the
-`devcontainer` CLI). Unlike the agent modes, you work in the container shell and run `claude`
+`devcontainer` CLI). Unlike the agent entrypoint, you work in the container shell and run `claude`
 yourself; the image's auto-launch ENTRYPOINT is suppressed (`overrideCommand: true`).
 
 - Pulls `ghcr.io/highload-zone/claude-code-standalone:latest` (pin a release tag for reproducibility).

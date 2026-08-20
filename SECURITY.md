@@ -78,10 +78,10 @@ may be root. Consequently:
   "Remote Control requires a full-scope login token … limited to inference-only for security reasons".
   The entrypoint prints that caveat at startup instead of failing silently.
 - **Outbound network is allowed.** Bridge networking blocks the host network but not the internet.
-  `context7` and `perplexity` MCP servers transmit data (including code context) to third parties.
-  On a root host this is an exfiltration channel under prompt injection — restrict egress at the
-  Docker-network/daemon level (cap-drop=ALL prevents in-container iptables) or remove those MCP
-  servers from `mcp-servers.json`.
+  The `context7`, `cloudflare-docs` and `perplexity` MCP servers transmit data (including code
+  context) to third parties. On a root host this is an exfiltration channel under prompt injection —
+  restrict egress at the Docker-network/daemon level (cap-drop=ALL prevents in-container iptables)
+  or remove those MCP servers from `mcp-servers.json`.
 - **Prompt injection (the main runtime risk).** Any file in the project is potential instructions for
   the autonomous agent. In the default **auto mode** the classifier blocks the worst injected actions
   (exfiltration to external endpoints, `curl | bash`, force-push, prod deploys) — but it is a research
@@ -92,13 +92,14 @@ may be root. Consequently:
   trusted projects only** and review what the agent commits.
 - **Third-party trust.** RTK's `PreToolUse` hook rewrites every Bash command (compromise = injection
   into every shell call); CodeGraph and codebase-memory-mcp ship opaque vendored binaries (the
-  latter ~258 MB, with tree-sitter grammars and an embedding model compiled in). All are
+  latter ~280 MB, with tree-sitter grammars and an embedding model compiled in). All are
   version/checksum pinned, but auditing them is the operator's responsibility.
 
 ## Read-write agent mode (single mode)
 
 The container runs as a single autonomous read-write agent: the project is bind-mounted `rw` at
-`/workspace`, and the container runs with `--user $(id -u):$(id -g)` so it owns the mount. Guardrails:
+`/workspace/project`, and the container runs with `--user $(id -u):$(id -g)` so it owns the mount.
+Guardrails:
 
 - **Scoped deploy key for push** (read-only mounted, `IdentitiesOnly=yes`), set via
   `DEPLOY_KEY=/path/to/key` — the agent can push only to that one repo and **cannot ssh elsewhere**
@@ -111,21 +112,11 @@ The container runs as a single autonomous read-write agent: the project is bind-
 - Writable HOME is a tmpfs; the baked agent state is copied into it at start. The image's baked
   `/home/claude` is world-readable (no secrets — `claude-config.json` is sanitized).
 
-## IDE modes (ACP adapter and Dev Container)
+## Dev Container mode
 
-Two additional entrypoints exist for IDE use; both change the posture relative to the autonomous
-`run_claude.sh` entrypoint and are documented here.
+One additional entrypoint exists for IDE use; it changes the posture relative to the autonomous
+`run_claude.sh` entrypoint and is documented here.
 
-- **ACP adapter (`run_acp.sh` → `claude-agent-acp`).** The editor (e.g. Zed) launches the container
-  over stdio and drives it via the Agent Client Protocol. Crucially, this path does **not** pass
-  `--dangerously-skip-permissions`; tool calls (edits, shell commands) are sent back to the editor as
-  **permission requests a human approves**. So the ACP path is *less* permissive than the autonomous
-  agent entrypoint — a human gates each action, versus auto mode's background classifier (or full
-  bypass under `CLAUDE_BYPASS_PERMISSIONS=1`). It keeps the same hardening (`cap-drop=ALL`, `no-new-privileges`, bridge
-  network, non-root `--user`, tmpfs HOME) with a raised `--pids-limit` (interactive tooling forks
-  more). The project is bind-mounted **read-write at its host-absolute path** (path coherence for the
-  editor); the same `DEPLOY_KEY` model gates `git push`. Outbound network and prompt-injection risks
-  are unchanged from the main agent mode.
 - **Dev Container (`.devcontainer/devcontainer.json`).** You work interactively in the container; the
   auto-launch ENTRYPOINT is suppressed (`overrideCommand: true`). It keeps the hardened profile but
   adds back a **minimal capability set** (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID`) that
@@ -160,20 +151,20 @@ compromised and rotate it immediately.
   equivalent of `CODEGRAPH_NO_DOWNLOAD` to forbid it — nothing in this image invokes it, but an
   agent with shell access could. Upstream's "zero network requests" claim is not independently
   verified here.
-- Known transitive advisories (`npm audit`): the toolchain ships with `form-data`, `hono` and
-  `ip-address` (≥10.4.0, three high-severity SSRF/trust-boundary advisories) patched
-  (`npm audit fix --package-lock-only`, no top-level pin drift). Two high-severity
-  advisories remain in `@modelcontextprotocol/sdk` (≤1.25.1), pulled in transitively by
-  `perplexity-mcp@0.2.3` (the latest release, which pins the old SDK) — upstream marks both
-  "no fix available." Applicability in this image is limited: the DNS-rebinding advisory
-  (GHSA-w48q-cv73-mx4w) targets HTTP servers bound to localhost that accept browser origins, but
-  `perplexity-mcp` runs as a **stdio** server here (no listening socket); the ReDoS advisory
-  (GHSA-8r9q-7v3j-jr4g) requires feeding adversarial input through the SDK's parser. This is a
-  **deliberately accepted residual**. Closing it would mean dropping `perplexity-mcp` or forcing a
-  patched SDK via an npm `overrides` entry — the latter is a user-decided follow-up because it may
-  break `perplexity-mcp`'s SDK API usage.
-- The ACP adapter pulls in `@anthropic-ai/claude-agent-sdk`, which ships its own Claude Code binary
-  as a per-platform optionalDependency. To avoid executing a second, separately-sourced Claude
-  binary, `CLAUDE_CODE_EXECUTABLE` pins the ACP path to the already-audited `claude` from the
-  toolchain; the SDK's bundled binary is installed (it is an npm-locked, integrity-verified tarball)
-  but **not executed** at runtime. This is image-size overhead, not a runtime exposure.
+- Known transitive advisories (`npm audit`, re-derived after the lockfile regeneration that removed
+  the ACP adapter): the toolchain ships with `form-data` (4.0.6), `hono` (4.12.34) and `ip-address`
+  (10.4.0) patched (`npm audit fix --package-lock-only`, no top-level pin drift; verified to survive
+  the regen). What remains is **2 high**, and both rows are the same single advisory —
+  **GHSA-w48q-cv73-mx4w** ("MCP TypeScript SDK does not enable DNS rebinding protection by default",
+  range `<1.24.0`): one row for `@modelcontextprotocol/sdk` itself and one for `perplexity-mcp@0.2.3`
+  (the latest release, which pins the old SDK) that depends on it. Upstream marks it
+  "no fix available." Applicability in this image is limited: the advisory targets HTTP servers bound
+  to localhost that accept browser origins, but `perplexity-mcp` runs as a **stdio** server here, with
+  no listening socket. This is a **deliberately accepted residual**. Closing it would mean dropping
+  `perplexity-mcp` or forcing a patched SDK via an npm `overrides` entry — the latter is a
+  user-decided follow-up because it may break `perplexity-mcp`'s SDK API usage.
+- **No second Claude Code binary ships in the image.** The `claude` from the locked toolchain is the
+  only one present. The earlier ACP adapter pulled in `@anthropic-ai/claude-agent-sdk` with its own
+  per-platform Claude binaries — a residual that was mitigated by pinning `CLAUDE_CODE_EXECUTABLE`;
+  removing the adapter drops that whole subtree from the lockfile, so the mitigation is no longer
+  needed either.

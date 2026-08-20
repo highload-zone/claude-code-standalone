@@ -4,17 +4,16 @@
   "private": true,
   "description": "Pinned, lockfile-controlled global CLI toolchain for the claude-standalone container. Installed via `npm ci` for bit-for-bit reproducible npm tarballs (integrity-verified). Do not add `^`/`~` ranges here — exact versions only; regenerate package-lock.json inside node:22 after any change.",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.221",
-    "@agentclientprotocol/claude-agent-acp": "0.64.2",
-    "@fission-ai/openspec": "1.7.0",
+    "@anthropic-ai/claude-code": "2.1.238",
+    "@fission-ai/openspec": "1.10.0",
     "@colbymchenry/codegraph": "1.5.0",
     "caveman-shrink": "0.1.0",
     "@modelcontextprotocol/server-sequential-thinking": "2026.7.4",
     "perplexity-mcp": "0.2.3",
-    "pnpm": "11.18.0",
+    "pnpm": "11.22.0",
     "typescript": "6.0.3",
     "ts-node": "10.9.2",
     "prettier": "3.9.6",
-    "eslint": "10.8.0"
+    "eslint": "10.8.1"
   }
 }
