@@ -38,12 +38,6 @@
           "NotebookRead(*)",
           "NotebookWrite(*)",
           "mcp__*"
-        ],
-        "additionalDirectories": [
-          "/workspace/project/input",
-          "/workspace/project/output",
-          "/workspace/project/data",
-          "/workspace/project/temp"
         ]
       },
       "hasCompletedProjectOnboarding": true,
