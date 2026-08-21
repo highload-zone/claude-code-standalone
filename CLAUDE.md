@@ -73,7 +73,6 @@ docker build -t claude-code-standalone .
 # Run with specific Claude Code arguments
 ./run_claude.sh --model opus --verbose
 
-
 # Open debug shell in container
 ./debug-shell.sh
 
