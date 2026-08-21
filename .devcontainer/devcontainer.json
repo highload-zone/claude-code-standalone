@@ -2,9 +2,8 @@
 //
 // Opens your project INSIDE the hardened container as an interactive development
 // environment (VS Code Dev Containers, JetBrains Gateway, GitHub Codespaces, or
-// the `devcontainer` CLI). This is distinct from the two agent entrypoints:
-//   - run_claude.sh  → autonomous Claude Code TUI
-//   - run_acp.sh      → ACP adapter an external IDE (Zed) drives over stdio
+// the `devcontainer` CLI). This is distinct from the agent entrypoint
+// run_claude.sh, which launches an autonomous Claude Code TUI.
 // Here YOU work in the container shell and invoke `claude` yourself when you want.
 //
 // The image's ENTRYPOINT (claude --remote-control) is intentionally NOT run:
@@ -30,8 +29,11 @@
   "remoteUser": "claude",
   "updateRemoteUserUID": true,
 
-  "workspaceFolder": "/workspace",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  // One level below /workspace on purpose: codebase-memory-mcp refuses to index a
+  // first-level path as a root since v0.10.0, and /workspace is the CBM_ALLOWED_ROOT
+  // boundary the image bakes in. All entrypoints use this same path.
+  "workspaceFolder": "/workspace/project",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/project,type=bind,consistency=cached",
 
   // Hardened profile (per project decision) with a raised pids cap for interactive
   // dev (test runners / language servers / builds fork many processes).

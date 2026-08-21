@@ -74,9 +74,9 @@ fi
 # Update claude-config.json with merged MCP servers
 echo "📝 Updating Claude configuration..."
 
-# Use jq to update the mcpServers field in the /workspace project
+# Use jq to update the mcpServers field in the /workspace/project project
 jq --argjson servers "$MERGED_SERVERS" \
-   '.projects["/workspace"].mcpServers = $servers' \
+   '.projects["/workspace/project"].mcpServers = $servers' \
    "$CLAUDE_CONFIG" > "${CLAUDE_CONFIG}.tmp"
 
 mv "${CLAUDE_CONFIG}.tmp" "$CLAUDE_CONFIG"
@@ -84,4 +84,4 @@ mv "${CLAUDE_CONFIG}.tmp" "$CLAUDE_CONFIG"
 echo "✅ MCP server installation complete"
 echo ""
 echo "Installed servers:"
-jq -r '.projects["/workspace"].mcpServers | keys[]' "$CLAUDE_CONFIG" | sed 's/^/  - /'
+jq -r '.projects["/workspace/project"].mcpServers | keys[]' "$CLAUDE_CONFIG" | sed 's/^/  - /'

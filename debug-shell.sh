@@ -28,8 +28,8 @@ DOCKER_ARGS=(
   --tmpfs "/home/agent:exec,mode=1777,size=512m"
   -e HOME=/home/agent
   --tmpfs "/tmp:noexec,nosuid,size=100m"
-  -v "$PROJECT_DIR:/workspace:rw"
-  -w /workspace
+  -v "$PROJECT_DIR:/workspace/project:rw"
+  -w /workspace/project
   -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}"
 )
 
@@ -41,6 +41,6 @@ if [ -f .env ]; then
   done < .env
 fi
 
-echo "🐚 Debug shell (read-write /workspace) on: $PROJECT_DIR"
+echo "🐚 Debug shell (read-write /workspace/project) on: $PROJECT_DIR"
 echo "   Tip: run 'cp -a /home/claude/. \"\$HOME/\"' to load the baked agent state."
 docker "${DOCKER_ARGS[@]}" "$IMAGE"

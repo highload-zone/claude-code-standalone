@@ -2,7 +2,7 @@
 
 # Claude Code — single read-write agent mode.
 #
-# The current directory is mounted READ-WRITE at /workspace and Claude Code runs
+# The current directory is mounted READ-WRITE at /workspace/project and Claude Code runs
 # as a fully autonomous agent (edit / commit / push). The container runs with
 # --user $(id -u):$(id -g) so it owns the bind-mounted project (one image, works
 # for any host uid); the baked agent state (config, RTK hook, caveman plugin,
@@ -50,8 +50,8 @@ DOCKER_ARGS=(
   # Non-executable scratch space.
   --tmpfs "/tmp:noexec,nosuid,size=100m"
   # Project mounted READ-WRITE — the agent edits/commits/pushes here.
-  -v "$PROJECT_DIR:/workspace:rw"
-  -w /workspace
+  -v "$PROJECT_DIR:/workspace/project:rw"
+  -w /workspace/project
   -e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}"
   # Remote Control is on by default in the entrypoint; name its sessions after the
   # host project instead of the container's throwaway hostname. Only effective with

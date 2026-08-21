@@ -13,12 +13,12 @@ This is a security-hardened Docker container that runs Claude Code with pre-inst
 The container is built on Node.js 22 (LTS) with the following layers:
 
 1. **Base System** - Debian Trixie (glibc 2.41) with hardened security settings
-2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.221), OpenSpec (1.7.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.18.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.8.0)
-3. **OpenSpec** - initialized into `/workspace` at build time with telemetry disabled via `OPENSPEC_TELEMETRY=0`
+2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.238), OpenSpec (1.10.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.22.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.8.1)
+3. **OpenSpec** - initialized into the build HOME (`/home/claude`) at build time, with telemetry disabled via `OPENSPEC_TELEMETRY=0`. The project itself is NOT initialized at build — it is overlaid by the runtime mount
 4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified); `rtk init -g --auto-patch` installs a Claude Code PreToolUse hook that rewrites Bash commands through `rtk`
 5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.9.1`
 6. **CodeGraph** - Code knowledge graph exposed as an MCP server (`@colbymchenry/codegraph`); ships a vendored prebuilt binary, runtime GitHub download disabled via `CODEGRAPH_NO_DOWNLOAD=1`
-7. **codebase-memory-mcp** - Tree-sitter code-intelligence graph exposed as an MCP server; a single static GitHub-release binary in `/usr/local/bin` (version via `CBM_VERSION` build arg, sha256-verified per arch). NOT installed from npm — see "codebase-memory-mcp" under Pre-installed Tools
+7. **codebase-memory-mcp** - Tree-sitter code-intelligence graph exposed as an MCP server; a single static GitHub-release binary in `/usr/local/bin` (version via `CBM_VERSION` build arg, default `v0.10.8`, sha256-verified per arch). NOT installed from npm — see "codebase-memory-mcp" under Pre-installed Tools
 8. **MCP Servers** - Configured from MCP JSON configs; all stdio servers use pre-installed bins (no runtime `npx`)
 
 ### Security Features
@@ -35,7 +35,7 @@ The container implements defense-in-depth:
 
 ### Volume Mounts (single read-write mode)
 
-- `/workspace` - the host project, mounted **read-write** (`$(pwd)`). The agent edits/commits/pushes
+- `/workspace/project` - the host project, mounted **read-write** (`$(pwd)`). The agent edits/commits/pushes
   here. The container runs with `--user $(id -u):$(id -g)` so it owns this mount.
 - `HOME` (`/home/agent`) - writable tmpfs; the entrypoint copies the baked agent state
   (`/home/claude`) into it at start.
@@ -73,8 +73,6 @@ docker build -t claude-code-standalone .
 # Run with specific Claude Code arguments
 ./run_claude.sh --model opus --verbose
 
-# Expose the container as an ACP agent for an IDE (Zed) — stdio, launched BY the editor
-./run_acp.sh
 
 # Open debug shell in container
 ./debug-shell.sh
@@ -116,15 +114,16 @@ git diff --help  # Will show diff with delta formatting
 MCP (Model Context Protocol) servers are configured via JSON files and installed automatically during container build.
 
 All MCP servers currently live in `mcp-servers.json` and are installed verbatim by
-`install-mcp-servers.sh` into `~/.claude.json` under `.projects["/workspace"].mcpServers`.
+`install-mcp-servers.sh` into `~/.claude.json` under `.projects["/workspace/project"].mcpServers`.
 `mcp-servers-optional.json` is currently empty (`{}`).
 
 Servers defined in `mcp-servers.json`:
 - **CodeGraph** - Code knowledge graph; wrapped by `caveman-shrink` (`command: caveman-shrink`, `args: ["codegraph","serve","--mcp"]`) to compress tool descriptions. Requires a per-project `.codegraph/` index (see "CodeGraph indexing" below). No API key. Both `caveman-shrink` and `codegraph` are pre-installed (local upstream, so no npx round-trip and no `MCP_TIMEOUT` risk)
 - **Sequential Thinking** - Enhanced reasoning capabilities; pre-installed bin `mcp-server-sequential-thinking` (pkg `@modelcontextprotocol/server-sequential-thinking@2026.7.4`)
 - **Context7** - Up-to-date documentation (`type: http`, sends header `CONTEXT7_API_KEY`)
+- **Cloudflare docs** - Cloudflare / Vite / Vitest documentation retrieval (`type: http`, url `https://stack.mcp.cloudflare.com/mcp?libs=…`). **No API key, no headers, no npm package** — there is nothing to pre-install and nothing to add to `.env`; the `?libs=…` query string selects the indexed library set and must be copied verbatim
 - **Perplexity** - Web search and research; pre-installed bin `perplexity-mcp` (pkg `perplexity-mcp@0.2.3`, env `PERPLEXITY_API_KEY`)
-- **codebase-memory-mcp** - Tree-sitter code-intelligence graph; pre-installed static binary `codebase-memory-mcp` (GitHub release `v0.9.0`, sha256-pinned per arch), invoked with no args — the binary detects MCP stdio mode itself. No API key. Requires an explicit `index_repository` call per repo (see "codebase-memory-mcp indexing" below)
+- **codebase-memory-mcp** - Tree-sitter code-intelligence graph; pre-installed static binary `codebase-memory-mcp` (GitHub release `v0.10.8`, sha256-pinned per arch), invoked with no args — the binary detects MCP stdio mode itself. No API key. Requires an explicit `index_repository` call per repo (see "codebase-memory-mcp indexing" below)
 
 **Important about API-key substitution:** `install-mcp-servers.sh` performs `${VAR}`
 substitution **only** for entries read from `mcp-servers-optional.json`. Servers in the
@@ -138,13 +137,15 @@ as long as the vars are present in the runtime env; build-time substitution is n
 **No runtime installs — all MCP servers are pre-installed (supply-chain hardening):** every
 stdio MCP server invokes a **pre-installed, pinned binary** (`mcp-server-sequential-thinking`,
 `perplexity-mcp`, `codegraph`, `codebase-memory-mcp`, plus the `caveman-shrink` wrapper), never
-`npx -y <pkg>`. Nothing is fetched from the network to start a server. **Verified by build+run:** all five
+`npx -y <pkg>`. Nothing is fetched from the network to start a server. HTTP servers (`context7`,
+`cloudflare-docs`) have nothing to pre-install by construction. **Verified by build+run:** all **six**
 servers show `✓ Connected` under the **default** `MCP_TIMEOUT=10000` (10s) — the whole
-`claude mcp list` health check takes ~4.6s wall-clock, including the 258 MB `codebase-memory-mcp`
+`claude mcp list` health check takes ~5.7s wall-clock, including the 280 MB `codebase-memory-mcp`
 binary (its size does not cost cold-start latency). There is no package download to
 race the timeout (the earlier `npx -y` form intermittently failed on a cold cache). When adding a
 new server, pre-install its package globally in the `Dockerfile` at a pinned version and point the
-config at the installed bin — do **not** use `npx -y`.
+config at the installed bin — do **not** use `npx -y`. For an **HTTP** server there is nothing to
+pre-install: add the `type: http` + `url` entry only.
 
 **Adding new MCP servers:**
 1. **Pre-install the server package** globally in the `Dockerfile` at a **pinned** version
@@ -179,21 +180,21 @@ The scripts (`run_claude.sh` and `debug-shell.sh`) dynamically read all variable
 **Checking installed MCP servers:**
 ```bash
 # Inside container
-cat ~/.claude.json | jq '.projects["/workspace"].mcpServers | keys'
+cat ~/.claude.json | jq '.projects["/workspace/project"].mcpServers | keys'
 
 # View specific server configuration
-cat ~/.claude.json | jq '.projects["/workspace"].mcpServers["perplexity"]'
+cat ~/.claude.json | jq '.projects["/workspace/project"].mcpServers["perplexity"]'
 ```
 
 ### CodeGraph indexing
 
-CodeGraph stores its index in `.codegraph/codegraph.db` inside the indexed tree. Since `/workspace`
-is now mounted **read-write**, this is straightforward:
+CodeGraph stores its index in `.codegraph/codegraph.db` inside the indexed tree. Since
+`/workspace/project` is mounted **read-write**, this is straightforward:
 
-- Run `codegraph init -i /workspace` once per project/session to build the index (writes
-  `/workspace/.codegraph/`). The MCP server (`codegraph serve --mcp`) is launched by Claude Code
-  with `/workspace` as CWD and uses that index; without it the tools report "not initialized" (the
-  server itself still starts).
+- Run `codegraph init -i /workspace/project` once per project/session to build the index (writes
+  `/workspace/project/.codegraph/`). The MCP server (`codegraph serve --mcp`) is launched by Claude
+  Code with `/workspace/project` as CWD and uses that index; without it the tools report "not
+  initialized" (the server itself still starts).
 - The file watcher uses `inotify`; in a caps-dropped container it may not fire. If needed, disable it
   with `CODEGRAPH_NO_DAEMON=1` and rely on connect-time catch-up, or run `codegraph sync` manually.
 - Permissions: the image allows `mcp__*` (full bypass in `claude-config.json`), so the
@@ -204,30 +205,54 @@ is now mounted **read-write**, this is straightforward:
 Unlike CodeGraph, codebase-memory-mcp does **not** write into the indexed tree: its graph lives in
 `$CBM_CACHE_DIR`, default `~/.cache/codebase-memory-mcp/`, keyed by project.
 
+- **Why the project is mounted at `/workspace/project` and not `/workspace`.** Since v0.10.0 the
+  binary refuses to index any **first-level** path as a root: `index_repository` on `/workspace`
+  answers `"/workspace: path is too broad to index as one root; name a project directory below it"`.
+  Measured: `/workspace` and `/proj` are refused, `/workspace/repo`, `/srv/x` and `/w/x` are indexed.
+  The rule comes from upstream PR #1464 (`src/foundation/workspace.{c,h}`, first shipped in v0.10.0),
+  which rejects a candidate root less than two components below the volume; its motivation is issue
+  #1241, an OOM from indexing `~`. It **cannot be lifted**: `allow-root /workspace` answers
+  `refused`, and `--approve-sensitive` does not apply. Hence the mount lives one level down.
+- **`CBM_ALLOWED_ROOT=/workspace` is baked in** (see "Baked-in `ENV`"), confining indexing to the
+  project mount. This became possible only because `/workspace` is now the single entrypoint path;
+  the previous ACP adapter mounted the project at its host-absolute path, which is why the variable
+  used to be left unset. **Verified as a live control, not a dead knob:** `index_repository` on
+  `/home/agent` is refused with `"/home/agent is outside the allowed root. To allow it, run:
+  codebase-memory-mcp allow-root /home/agent"`, while `/workspace/project` indexes normally.
+- **The graph UI is turned OFF at build time** (`codebase-memory-mcp config set ui_enabled false`).
+  Upstream defaults `ui_enabled` to **true**, so the coordination daemon otherwise binds
+  `127.0.0.1:9749` on the first MCP session — measured, and contrary to the upstream README, which
+  documents the UI as needing an explicit `--ui=true --port=9749`. **Verified in the built image:**
+  `/proc/net/tcp` and `/proc/net/tcp6` show no listening socket, and the daemon log has no
+  `ui.serving` line.
+- **v0.10.x runs a background daemon.** The first MCP session starts a detached
+  `codebase-memory-mcp --cbm-daemon-internal`, and there is no setting to opt out. **Measured in the
+  built image** under the production profile: **2 processes** for this server (frontend + daemon)
+  versus 1 on v0.9.0, and a `watcher.start` entry in the daemon log (`auto_watch` defaults to true).
+  Two PIDs fit the `--pids-limit=100` budget comfortably, so `auto_watch` is left alone. Idle CPU is
+  a spike to ~100% of one core at daemon start, then 2.1–2.4% steady (v0.9.0: 0.01–0.03%) — see the
+  open upstream issue #1764, whose severe form is reported on Windows.
 - **The cache dir is deliberately left at its default.** In this image HOME is a writable **tmpfs**
   populated by the entrypoint, so the index does **not** survive a container restart and must be
   rebuilt per session (`index_repository` — for typical repos this is seconds). A baked
-  `CBM_CACHE_DIR=/workspace/...` was rejected because `/workspace` does not exist in the ACP
-  entrypoint (`run_acp.sh` mounts the project at its identical host path), and because writing an
-  index directory into the user's repo is not this container's business. If you want persistence,
-  pass it per-run: `-e CBM_CACHE_DIR=/workspace/.cache/codebase-memory-mcp` in `run_claude.sh`.
+  `CBM_CACHE_DIR=/workspace/...` was rejected because writing an index directory into the user's repo
+  is not this container's business. If you want persistence, pass it per-run:
+  `-e CBM_CACHE_DIR=/workspace/project/.cache/codebase-memory-mcp` in `run_claude.sh`.
 - **Consequence of that default:** the graph lands in the HOME tmpfs, which `run_claude.sh` sizes at
-  **512 MB** and which also holds all Claude Code agent state. 1.8 MB for this 21-file repo, but the
-  graph grows with the tree — on a large monorepo the same `-e CBM_CACHE_DIR=…` override (pointing at
-  the rw project mount) is the way to keep the index out of that tmpfs budget.
-- Indexing is explicit: call the `index_repository` tool (`{"repo_path": "/workspace"}`) or the CLI
-  form `codebase-memory-mcp cli index_repository '{"repo_path":"/workspace"}'`. Until then the query
-  tools have no graph to answer from (the server itself still starts). **Verified in the built
-  image** (caps dropped, `--pids-limit=100`, tmpfs HOME): indexing this repo yields 255 nodes /
-  282 edges in ~1s and a 1.8 MB cache; `search_graph` / `get_architecture` answer from it both via
-  the CLI and via an MCP `tools/call`.
-- `CBM_ALLOWED_ROOT` (restrict indexing to a subtree) is intentionally **not** set: it would be
-  correct for the `/workspace` entrypoint and wrong for the ACP one, which uses host-absolute paths.
+  **512 MB** and which also holds all Claude Code agent state. 2.3 MB for this repo, but the graph
+  grows with the tree — on a large monorepo the same `-e CBM_CACHE_DIR=…` override (pointing at the
+  rw project mount) is the way to keep the index out of that tmpfs budget.
+- Indexing is explicit: call the `index_repository` tool (`{"repo_path": "/workspace/project"}`).
+  Until then the query tools have no graph to answer from (the server itself still starts).
+  **Verified in the built image** (caps dropped, `--pids-limit=100`, tmpfs HOME, host uid): indexing
+  this repo yields **231 nodes / 279 edges** in ~6s and a **2.3 MB** cache.
 - Permissions: covered by the image-wide `mcp__*` allow (`claude-config.json`), like CodeGraph.
 - Other env knobs (all unset here, upstream defaults apply): `CBM_LOG_LEVEL`, `CBM_WORKERS`,
   `CBM_MEM_BUDGET_MB`, `CBM_DIAGNOSTICS`, `CBM_DOWNLOAD_URL`. With `CBM_MEM_BUDGET_MB` unset the
-  binary auto-sizes from **host** RAM (observed: `mem.init budget_mb=31876 total_ram_mb=63752`) —
-  the container has no `--memory` cap, so on a memory-tight host set this explicitly.
+  binary auto-sizes from **host** RAM (observed on this host: `mem.init budget_mb=31876
+  total_ram_mb=63752`) — the container has no `--memory` cap, so on a memory-tight host set this
+  explicitly. Upstream also documents `CBM_WORKERS` as the knob for containers, where
+  `sysconf(_SC_NPROCESSORS_ONLN)` reports host CPUs rather than the cgroup quota.
 
 ## Environment Variables
 
@@ -256,9 +281,9 @@ prints a constant without loading the compiler; the build gate therefore also ru
 `ts-node -e '<typed snippet>'`.
 
 **Build-time variables** (set during `docker build`):
-- `RTK_VERSION` - Git tag of the RTK release to download (default: `v0.44.2`); RTK is a
+- `RTK_VERSION` - Git tag of the RTK release to download (default: `v0.45.0`); RTK is a
   GitHub-release binary, not npm. Override directly: `docker build --build-arg RTK_VERSION=...`
-- `CBM_VERSION` - Git tag of the codebase-memory-mcp release to download (default: `v0.9.0`); also a
+- `CBM_VERSION` - Git tag of the codebase-memory-mcp release to download (default: `v0.10.8`); also a
   GitHub-release binary, not npm (its npm package would download the binary unverified — see
   Pre-installed Tools). Override: `docker build --build-arg CBM_VERSION=...`
 - The per-arch **sha256 values are not build args** — they are hardcoded in the `case "$TARGETARCH"`
@@ -299,6 +324,9 @@ prints a constant without loading the compiler; the build gate therefore also ru
   ran, i.e. `0` behaves as if the variable were unset. Use `1` for the tightest real limit.
 - `OPENSPEC_TELEMETRY=0` (disables OpenSpec telemetry at build and runtime)
 - `CODEGRAPH_NO_DOWNLOAD=1` (forbids CodeGraph's runtime binary download from GitHub Releases; binary must come from the npm registry)
+- `CBM_ALLOWED_ROOT=/workspace` — confines codebase-memory-mcp's indexing to the project mount; an
+  `index_repository` whose `repo_path` resolves outside it is refused. Correct because every
+  entrypoint mounts the project at `/workspace/project` (see "codebase-memory-mcp indexing")
 - `NODE_ENV=production`, plus security limits (`RLIMIT_CORE=0`, `RLIMIT_NOFILE=1024`, `YAMA_PTRACE_SCOPE=1`)
 
 **Pre-configured behavior:**
@@ -312,7 +340,7 @@ prints a constant without loading the compiler; the build gate therefore also ru
   first-run dialogs in headless.
 - **`advisorModel: "opus"`** (in `settings.json`) — Claude consults Opus at decision points (Anthropic
   API only). No-op if the main model outranks Opus (e.g. Fable).
-- `claude-config.json` still pre-approves tools for `/workspace` (`allow` rules + `mcp__*`); note auto
+- `claude-config.json` still pre-approves tools for `/workspace/project` (`allow` rules + `mcp__*`); note auto
   mode drops blanket `Bash(*)`/`Agent` rules at runtime (the classifier takes over).
 - **`autoMode.classifyAllShell: true`** (in `settings.json`) — routes *every* Bash/PowerShell command
   through the auto-mode classifier instead of only arbitrary-code-execution patterns. Upstream default
@@ -333,8 +361,8 @@ prints a constant without loading the compiler; the build gate therefore also ru
   parser (`1/true/yes/on`). `autoMode.classifyAllShell`,
   `agentPushNotifEnabled` and `workflowSizeGuideline` are *accepted* — they appear in the 2.1.220
   settings-key table, their values come from the binary's own enum/parser, and `claude doctor` on
-  2.1.221 still reports no invalid settings for them (only the two missing MCP API-key vars) — but
-  their runtime effect was **not** observed: the workflow-size system
+  **2.1.238** reports "No installation issues found." (the only note is the expected Remote Control
+  full-scope-token caveat) — but their runtime effect was **not** observed: the workflow-size system
   reminder is not injected in `-p`/headless runs, and `agentPushNotifEnabled` cannot do anything until
   Remote Control actually connects (which needs `claude auth login`).
 - `alwaysThinkingEnabled: true`, `autoUpdates: false`
@@ -344,7 +372,7 @@ prints a constant without loading the compiler; the build gate therefore also ru
 ## Development Workflow (single read-write mode)
 
 1. **Run from your project**: `cd /path/to/repo && ./run_claude.sh`. The current directory is mounted
-   **read-write** at `/workspace`; the container runs as your host user (`--user $(id -u):$(id -g)`).
+   **read-write** at `/workspace/project`; the container runs as your host user (`--user $(id -u):$(id -g)`).
 2. **Entrypoint**: `claude` (auto mode via settings.json); the entrypoint first copies the baked
    agent state from `/home/claude` into the writable tmpfs HOME. `CLAUDE_BYPASS_PERMISSIONS=1` is
    opt-in and adds `--dangerously-skip-permissions` (full bypass for isolated containers).
@@ -352,34 +380,16 @@ prints a constant without loading the compiler; the build gate therefore also ru
    `--remote-control-session-name-prefix` from `CLAUDE_REMOTE_CONTROL_PREFIX`; it needs a full-scope
    `claude auth login` token — the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it, and the
    entrypoint says so at startup.
-3. **Autonomous agent**: Claude edits/commits the project directly in `/workspace`. For `git push`,
+3. **Autonomous agent**: Claude edits/commits the project directly in `/workspace/project`. For `git push`,
    set `DEPLOY_KEY=/path/to/repo_deploy_key` (scoped, read-only mounted). Commit identity comes from
    your host `git config` (passed as env).
 4. **Trust**: the project is read-write and the agent is autonomous — use on trusted projects (see
    [SECURITY.md](./SECURITY.md)).
 
-## IDE integration (ACP + Dev Container)
+## IDE integration (Dev Container)
 
-Two extra entrypoints exist beside the autonomous `run_claude.sh`; they share the same image.
+One extra entrypoint exists beside the autonomous `run_claude.sh`; it shares the same image.
 
-- **ACP adapter — `run_acp.sh`** (`@agentclientprotocol/claude-agent-acp`, bin `claude-agent-acp`).
-  Exposes the container as an [Agent Client Protocol](https://agentclientprotocol.com) agent that an
-  external editor (Zed) **launches over stdio** and drives via JSON-RPC. Key implementation facts:
-  - `docker run -i` (NOT `-it`): stdout is the JSON-RPC channel, so `start-acp.sh` and `run_acp.sh`
-    send all diagnostics to **stderr**. Verified from the package's `src/index.ts` that a no-arg run
-    calls `process.stdin.resume()` and blocks (so the Dockerfile build-gate only checks presence,
-    `command -v claude-agent-acp`, never runs it).
-  - **Path coherence**: the project is mounted at its **identical host-absolute path**
-    (`-v "$PWD:$PWD" -w "$PWD"`), not `/workspace`, because the editor sends host-absolute paths for
-    cwd / `@`-mentions / diffs.
-  - `claude-agent-acp` is **not standalone** — it spawns a Claude Code binary via the Claude Agent
-    SDK. `ENV CLAUDE_CODE_EXECUTABLE=/opt/toolchain/node_modules/.bin/claude` (set in the Dockerfile)
-    pins it to the already-audited toolchain `claude` instead of the SDK's bundled per-platform
-    binary. Auth therefore uses the same `CLAUDE_CODE_OAUTH_TOKEN`.
-  - **Permission posture**: it does NOT pass `--dangerously-skip-permissions`; tool calls are gated
-    by the editor UI (human approves) — *less* permissive than the main entrypoint (see SECURITY.md).
-  - Zed setup: add an `agent_servers` entry in `~/.config/zed/settings.json` pointing `command` at
-    the absolute path of `run_acp.sh` (see README "Use from an IDE (Zed / ACP)").
 - **Dev Container — `.devcontainer/devcontainer.json`**. Opens the project *inside* the image as an
   interactive dev environment. Pulls the GHCR image; `overrideCommand: true` suppresses the
   auto-launch ENTRYPOINT (you run `claude` yourself). Hardened (`cap-drop=ALL` + the minimal caps the
@@ -398,20 +408,21 @@ Two extra entrypoints exist beside the autonomous `run_claude.sh`; they share th
 - **Prettier** - Code formatting
 - **OpenSpec** - `@fission-ai/openspec` CLI for spec-driven development (`openspec` binary)
   - Installed globally via npm; requires Node.js >= 20.19.0 (satisfied by the `node:22-trixie-slim` base)
-  - Initialized at build time into the build HOME via `openspec init /home/claude --tools claude --force` (non-interactive). This bakes `~/.claude/commands/opsx` + skills, which the entrypoint copies into the runtime HOME — so the opsx slash-commands are available. (`/workspace` is NOT initialized at build because it is overlaid by the rw project mount at runtime.)
-  - Run `openspec init` inside the actual project (`/workspace`, read-write) on demand
+  - Initialized at build time into the build HOME via `openspec init /home/claude --tools claude --force` (non-interactive). This bakes `~/.claude/commands/opsx` + skills, which the entrypoint copies into the runtime HOME — so the opsx slash-commands are available. (The project mount is NOT initialized at build because it is overlaid at runtime.)
+  - Run `openspec init` inside the actual project (`/workspace/project`, read-write) on demand
   - Telemetry is opt-out only via the `OPENSPEC_TELEMETRY=0` env var (no `telemetry.enabled` config key exists); set as baked-in ENV, covering build and runtime
   - Source: https://github.com/Fission-AI/OpenSpec
 - **RTK** - Rust Token Killer; CLI proxy that filters/compresses command output to cut LLM token usage (`rtk` binary)
-  - Static musl binary downloaded from GitHub releases into `/usr/local/bin`; pinned via `RTK_VERSION` build arg (default `v0.44.2`), no Rust toolchain needed
+  - Static musl binary downloaded from GitHub releases into `/usr/local/bin`; pinned via `RTK_VERSION` build arg (default `v0.45.0`), no Rust toolchain needed
   - `rtk init -g --auto-patch` runs at build time (as the `claude` user): installs a **Claude Code PreToolUse hook** that transparently rewrites Bash commands (`git status` → `rtk git status`), writes `~/RTK.md`, and patches `~/.bashrc`
   - `-g` targets Claude Code (there is no `--agent claude`); `--auto-patch` makes init non-interactive
   - Runtime needs only the `rtk` binary in PATH + the hook; no daemon. Optional config at `~/.config/rtk/config.toml`
   - Source: https://github.com/rtk-ai/rtk
 - **Caveman** - Output-compression skill for Claude Code (terse "caveman-speak"), reduces output tokens (~65%)
-  - Installed at build time via `npx -y github:JuliusBrussee/caveman#v1.9.1 --non-interactive --only claude` (as the `claude` user; requires Node.js >= 18)
-  - For the `claude` provider the installer uses the Claude Code **plugin mechanism** (`claude plugin marketplace add` + `claude plugin install caveman@caveman`) and wires hooks (by default it would also add a `caveman-shrink` MCP entry — suppressed here with `--no-mcp-shrink`, see below)
-  - **Verified by build:** the `claude plugin marketplace add` + `claude plugin install` steps succeed during `docker build` — `marketplace add` is a public HTTPS git clone and `plugin install` is a local copy, so neither hits the Claude auth API (and `configure-claude.sh` has already written `~/.claude.json` by that layer). Skill + hooks are installed. Not made best-effort, so any future failure stays visible
+  - Installed at build time via `npx -y github:JuliusBrussee/caveman#v1.9.1 --non-interactive --only claude --no-mcp-shrink` (as the `claude` user; requires Node.js >= 18)
+  - For the `claude` provider the installer uses the Claude Code **plugin mechanism** (`claude plugin marketplace add` + `claude plugin install caveman@caveman`); by default it would also add a `caveman-shrink` MCP entry — suppressed here with `--no-mcp-shrink`, see below
+  - **Verified by build+run:** the `claude plugin marketplace add` + `claude plugin install` steps succeed during `docker build` — `marketplace add` is a public HTTPS git clone and `plugin install` is a local copy, so neither hits the Claude auth API (and `configure-claude.sh` has already written `~/.claude.json` by that layer). The hooks come from the **plugin manifest**, not from `settings.json`: measured in the built image, `.hooks.SessionStart` and `.hooks.UserPromptSubmit` are empty and `.hooks.PreToolUse` holds only RTK's `rtk hook claude`, with `.statusLine` intact — i.e. the caveman layer does not clobber RTK's hook. Not made best-effort, so any future failure stays visible
+  - **Held at `v1.9.1`; do NOT bump to v2.x without redoing this analysis.** Measured against v2.2.0: it adds a runtime dependency `@caveman-ai/cli: ^1.1.0` that ships its own `caveman` bin, which **shadows** the installer's bin under `npx` — so `npx -y github:JuliusBrussee/caveman#v2.2.0 --non-interactive …` never reaches `bin/install.js` and instead answers `unknown command "--non-interactive"` from the cloud CLI. The installer script itself still accepts the old flags; it is simply unreachable that way. Worse for this image, that dependency is a **floating** range in a build layer (against the exact-pin policy), and `@caveman-ai/cli` is an account/cloud CLI whose compression runs in "companion Go binaries" fetched by `caveman setup` — a runtime download this image forbids. `v1.9.1` has no dependencies at all
   - Installed with **`--no-mcp-shrink`**: caveman's auto-registration wired `caveman-shrink` as a standalone MCP server with no upstream command, which always `✗ Failed to connect` (it is middleware, not a server). Instead `caveman-shrink` is pre-installed globally and applied as a wrapper around the codegraph MCP server (see CodeGraph / MCP Servers)
   - Source: https://github.com/JuliusBrussee/caveman
 - **CodeGraph** - Pre-indexed code knowledge graph (symbols, call graph, impact) served to agents over MCP (`codegraph` binary)
@@ -422,13 +433,13 @@ Two extra entrypoints exist beside the autonomous `run_claude.sh`; they share th
   - See "CodeGraph indexing" for the index write-location constraint in this container
   - Source: https://github.com/colbymchenry/codegraph
 - **codebase-memory-mcp** - Tree-sitter code-intelligence engine (knowledge graph of functions, classes, call chains, HTTP routes) served over MCP (`codebase-memory-mcp` binary)
-  - **Installed from the GitHub release, NOT from npm** (`ARG CBM_VERSION=v0.9.0`, per-arch `-portable` static asset, sha256-pinned in the Dockerfile). The npm package `codebase-memory-mcp` is a 12 kB shim: its `postinstall` downloads the binary from GitHub Releases outside npm's sha512 integrity, treats a missing `checksums.txt` as non-fatal (silently skipping verification), and `bin.js` re-downloads the binary on first run if absent — a runtime fetch, which this image forbids
-  - Single static binary, ~258 MB unpacked (159 vendored tree-sitter grammars + a vendored embedding model). **Measured:** it occupies a 258 MB layer — third-largest in the image, behind the `npm ci` toolchain layer (~1.47 GB) and one ~426 MB layer
+  - **Installed from the GitHub release, NOT from npm** (`ARG CBM_VERSION=v0.10.8`, per-arch `-portable` static asset, sha256-pinned in the Dockerfile). The npm package `codebase-memory-mcp` is a 12 kB shim: its `postinstall` downloads the binary from GitHub Releases outside npm's sha512 integrity, treats a missing `checksums.txt` as non-fatal (silently skipping verification), and `bin.js` re-downloads the binary on first run if absent — a runtime fetch, which this image forbids
+  - Single static binary, **280 MB** unpacked (vendored tree-sitter grammars + a vendored embedding model). **Measured on the built image:** it occupies a **279.6 MB** layer — third-largest, behind the `npm ci` toolchain layer (**1030.7 MB**) and the `apt-get install` system-deps layer (**426.2 MB**); the whole image is **2.01 GB**
   - The `-portable` Linux asset is the fully-static build; the plain `linux-*` asset needs glibc >= 2.38 (trixie has 2.41, so both would run — static is chosen to avoid the libc coupling)
   - Local SQLite graph under `$CBM_CACHE_DIR`, no API keys. Upstream states "zero network requests, no telemetry, no background version checks" — **not independently verified here**; note the binary does have a manual `update` subcommand and a `CBM_DOWNLOAD_URL` override, i.e. a download path exists (unlike codegraph, there is no env switch to forbid it; nothing invokes it in this image)
   - Registered as the `codebase-memory-mcp` MCP server, invoked with **no args** (the binary detects MCP stdio mode itself)
-  - **Measured, not from the vendor README:** the MCP surface is **8** tools — `index_repository`, `search_graph`, `query_graph`, `trace_path`, `get_code_snippet`, `get_graph_schema`, `get_architecture`, `search_code` (`tools/list` over stdio against the built image, both before and after indexing). The upstream README advertises 14 and names some differently (`trace_call_path`, `list_projects`, `index_status`, `detect_changes`, `manage_adr`, `ingest_traces`) — those exist in the **CLI** (`codebase-memory-mcp cli <tool> '<json>'` — v0.9.0 prints a deprecation warning for raw-JSON args and points at flags / `--args-file` / piped stdin) but are NOT exposed over MCP in v0.9.0
-  - All query tools take a required `project` argument; the project name is the basename of the indexed root (`/workspace` → `workspace`) and is returned by `index_repository`. Since `list_projects` is CLI-only, an agent that did not index in this session has no MCP way to enumerate project names
+  - **Measured, not from the vendor README:** the MCP surface in v0.10.8 is **15** tools — `index_repository`, `search_graph`, `query_graph`, `trace_path`, `get_code_snippet`, `get_graph_schema`, `get_architecture`, `search_code`, `list_projects`, `delete_project`, `index_status`, `check_index_coverage`, `detect_changes`, `manage_adr`, `ingest_traces` (`tools/list` over stdio against the built image). That is up from **8** in v0.9.0: `list_projects`, `index_status`, `detect_changes`, `manage_adr` and `ingest_traces` used to be CLI-only and are now exposed over MCP, and `delete_project` / `check_index_coverage` are new
+  - All query tools take a required `project` argument; the project name is derived from the indexed root path (`/workspace/project` → `workspace-project`) and is returned by `index_repository`. `list_projects` is now an MCP tool, so an agent that did not index in this session can enumerate project names without dropping to the CLI
   - See "codebase-memory-mcp indexing" for the cache-dir/tmpfs consequence and the explicit indexing step
   - Source: https://github.com/DeusData/codebase-memory-mcp
 - **Git** - Version control with git-delta pre-configured for enhanced diffs
@@ -491,7 +502,7 @@ Inside the debug shell, you can run diagnostics manually:
 - Output directory is created automatically as `./reports/`
 
 **MCP server not loading:**
-- Check MCP configuration: `cat ~/.claude.json | jq '.projects["/workspace"].mcpServers'`
+- Check MCP configuration: `cat ~/.claude.json | jq '.projects["/workspace/project"].mcpServers'`
 - Verify the server's pre-installed bin is on PATH (e.g. `command -v mcp-server-sequential-thinking perplexity-mcp codegraph caveman-shrink codebase-memory-mcp`)
 - Check MCP timeout setting: `echo $MCP_TIMEOUT` (default: 10000ms = 10 seconds; all servers are pre-installed so no download races this)
 - Run diagnostics: `./run-diagnostics.sh` or inside container: `/app/diagnose-mcp.sh`
@@ -514,7 +525,6 @@ Inside the debug shell, you can run diagnostics manually:
 - `.dockerignore` - Files excluded from Docker build context
 - `install.sh` - One-line installer (`curl … | bash`): pulls the GHCR image, stores the OAuth token in `~/.config/claude-standalone/claude.env` (chmod 600), and installs a `claude-box` launcher into `~/.local/bin` (the hardened `docker run` wrapped as an executable; supports `--uninstall` and a non-interactive path via `CLAUDE_CODE_OAUTH_TOKEN`). Also detects host `~/.claude/{agents,commands,skills}` and offers to pass them through — **mount** the live path (default), **copy** a snapshot to `~/.config/claude-standalone/resources/`, or **skip** (override non-interactively with `CLAUDE_RESOURCES_MODE`); the choice is written to `resources.conf`, `claude-box` mounts the paths read-only at `/host-claude/*`, and the entrypoint merges them OVER the baked state (host wins on collision; baked `opsx`/openspec skills survive)
 - `run_claude.sh` - Main entry point for running Claude Code (autonomous agent)
-- `run_acp.sh` - ACP entry point for IDE use (Zed); launched BY the editor over stdio
 - `.devcontainer/devcontainer.json` - Dev Container definition (interactive dev inside the image)
 - `debug-shell.sh` - Debug shell access
 - `run-diagnostics.sh` - Automated MCP server diagnostics (NEW)

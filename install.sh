@@ -178,8 +178,8 @@ args=(
   --tmpfs "/home/agent:exec,mode=1777,size=512m"
   -e HOME=/home/agent
   --tmpfs "/tmp:noexec,nosuid,size=100m"
-  -v "$PWD:/workspace:rw"
-  -w /workspace
+  -v "$PWD:/workspace/project:rw"
+  -w /workspace/project
   # Remote Control is on by default in the entrypoint; name its sessions after the
   # host project instead of the container's throwaway hostname. Only effective with
   # a full-scope `claude auth login` token — see SECURITY.md.
