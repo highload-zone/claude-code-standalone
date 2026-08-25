@@ -180,7 +180,7 @@ Base: `node:22-trixie-slim` (Node 22 LTS, Debian 13 / glibc 2.41). Multi-arch (a
 Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
 integrity, exact versions):
 
-- `@anthropic-ai/claude-code` (2.1.238), `@fission-ai/openspec` (1.10.0)
+- `@anthropic-ai/claude-code` (2.1.245), `@fission-ai/openspec` (1.10.0)
 - `@colbymchenry/codegraph` (1.5.0, MCP) wrapped by `caveman-shrink` (0.1.0)
 - MCP servers: `sequential-thinking`, `context7` (HTTP), `cloudflare-docs` (HTTP, no API key),
   `perplexity`, `codebase-memory-mcp` (GitHub-release binary, see below)
