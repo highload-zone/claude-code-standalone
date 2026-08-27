@@ -1,7 +1,7 @@
 # claude-code-standalone
 
 Security-hardened Docker container for running [Claude Code](https://docs.anthropic.com/claude-code)
-as an autonomous agent over your project. Built on Node.js 22 LTS (Debian Trixie slim, glibc 2.41),
+as an autonomous agent over your project. Built on Node.js 24 LTS (Debian Trixie slim, glibc 2.41),
 multi-arch (linux/amd64 + linux/arm64), with a pinned, lockfile-controlled CLI toolchain and a
 curated set of MCP servers.
 
@@ -175,7 +175,7 @@ Opus (e.g. `--model fable`, where an Opus advisor is rejected).
 
 ## What's inside
 
-Base: `node:22-trixie-slim` (Node 22 LTS, Debian 13 / glibc 2.41). Multi-arch (amd64 + arm64).
+Base: `node:24-trixie-slim` (Node 24 LTS, Debian 13 / glibc 2.41). Multi-arch (amd64 + arm64).
 
 Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
 integrity, exact versions):
@@ -185,7 +185,7 @@ integrity, exact versions):
 - MCP servers: `sequential-thinking`, `context7` (HTTP), `cloudflare-docs` (HTTP, no API key),
   `perplexity`, `codebase-memory-mcp` (GitHub-release binary, see below)
 - caveman skill (plugin, tag `v1.9.1`)
-- Dev tools: `pnpm` 11.22.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.9.6, `eslint` 10.8.1
+- Dev tools: `pnpm` 11.24.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.9.6, `eslint` 10.9.1
 
 GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.45.0), `git-delta` (0.19.2),
 `codebase-memory-mcp` (v0.10.8, MCP — a ~280 MB static binary; installed from the release, not from
@@ -232,10 +232,10 @@ docker pull ghcr.io/highload-zone/claude-code-standalone:latest
 ```
 
 To change a pinned tool version, edit `tools/package.json`, then regenerate the lockfile inside
-Node 22:
+Node 24:
 
 ```bash
-docker run --rm -v "$PWD/tools:/w" -w /w node:22-trixie-slim npm install --package-lock-only
+docker run --rm -v "$PWD/tools:/w" -w /w node:24-trixie-slim npm install --package-lock-only
 ```
 
 ## Run
