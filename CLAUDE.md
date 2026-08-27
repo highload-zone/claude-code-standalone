@@ -13,7 +13,7 @@ This is a security-hardened Docker container that runs Claude Code with pre-inst
 The container is built on Node.js 24 (LTS) with the following layers:
 
 1. **Base System** - Debian Trixie (glibc 2.41) with hardened security settings
-2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.246), OpenSpec (1.10.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.24.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.9.1)
+2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.248), OpenSpec (1.10.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.24.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.9.1)
 3. **OpenSpec** - initialized into the build HOME (`/home/claude`) at build time, with telemetry disabled via `OPENSPEC_TELEMETRY=0`. The project itself is NOT initialized at build — it is overlaid by the runtime mount
 4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified); `rtk init -g --auto-patch` installs a Claude Code PreToolUse hook that rewrites Bash commands through `rtk`
 5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.9.1`
@@ -139,7 +139,7 @@ stdio MCP server invokes a **pre-installed, pinned binary** (`mcp-server-sequent
 `npx -y <pkg>`. Nothing is fetched from the network to start a server. HTTP servers (`context7`,
 `cloudflare-docs`) have nothing to pre-install by construction. **Verified by build+run:** all **six**
 servers show `✓ Connected` under the **default** `MCP_TIMEOUT=10000` (10s) — the whole
-`claude mcp list` health check takes ~5.4s wall-clock (median of 3 runs, 4.8-5.8s), including the
+`claude mcp list` health check takes ~5.1s wall-clock (median of 3 runs, 4.7-5.2s), including the
 280 MB `codebase-memory-mcp` binary (its size does not cost cold-start latency). There is no
 package download to race the timeout (the earlier `npx -y` form intermittently failed on a cold
 cache). When adding a new server, pre-install its package globally in the `Dockerfile` at a pinned version and point the
@@ -277,10 +277,10 @@ becomes a refusal. `@anthropic-ai/claude-code` needs its `postinstall` (`node in
 npm tarball is only 179 kB and ships a ~1 kB `bin/claude.exe` **placeholder** — the postinstall is
 what hard-links the real 248 MB binary from the platform package over it. A silently skipped script
 would therefore produce a green build with a stub `claude`. The approval is **version-pinned**
-(`"@anthropic-ai/claude-code@2.1.246": true`), so a claude-code bump brings the warning back until
+(`"@anthropic-ai/claude-code@2.1.248": true`), so a claude-code bump brings the warning back until
 the entry is updated too — that is the intended reminder, not a bug. **Measured on node:24**: only
 `{"<pkg>@<version>": true}` or `{"<pkg>": true}` silence it; a semver **string** value
-(`"2.1.246"`, `"*"`, `">=2"`) is ignored and the warning stays.
+(`"2.1.248"`, `"*"`, `">=2"`) is ignored and the warning stays.
 
 **`typescript` is deliberately held at 6.0.3, NOT the `latest` dist-tag.** `latest` is 7.x, the
 native (Go) compiler rewrite, whose npm package no longer exposes the full JS compiler API. Under
@@ -372,7 +372,7 @@ prints a constant without loading the compiler; the build gate therefore also ru
   parser (`1/true/yes/on`). `autoMode.classifyAllShell`,
   `agentPushNotifEnabled` and `workflowSizeGuideline` are *accepted* — they appear in the 2.1.220
   settings-key table, their values come from the binary's own enum/parser, and `claude doctor` on
-  **2.1.246** reports "No installation issues found." (the only note is the expected Remote Control
+  **2.1.248** reports "No installation issues found." (the only note is the expected Remote Control
   full-scope-token caveat) — but their runtime effect was **not** observed: the workflow-size system
   reminder is not injected in `-p`/headless runs, and `agentPushNotifEnabled` cannot do anything until
   Remote Control actually connects (which needs `claude auth login`).
@@ -445,7 +445,7 @@ One extra entrypoint exists beside the autonomous `run_claude.sh`; it shares the
   - Source: https://github.com/colbymchenry/codegraph
 - **codebase-memory-mcp** - Tree-sitter code-intelligence engine (knowledge graph of functions, classes, call chains, HTTP routes) served over MCP (`codebase-memory-mcp` binary)
   - **Installed from the GitHub release, NOT from npm** (`ARG CBM_VERSION=v0.10.8`, per-arch `-portable` static asset, sha256-pinned in the Dockerfile). The npm package `codebase-memory-mcp` is a 12 kB shim: its `postinstall` downloads the binary from GitHub Releases outside npm's sha512 integrity, treats a missing `checksums.txt` as non-fatal (silently skipping verification), and `bin.js` re-downloads the binary on first run if absent — a runtime fetch, which this image forbids
-  - Single static binary, **280 MB** unpacked (vendored tree-sitter grammars + a vendored embedding model). **Measured on the built image:** it occupies a **279.6 MB** layer — third-largest, behind the `npm ci` toolchain layer (**839.7 MB**, of which **468 MB** is `@anthropic-ai/claude-code`) and the `apt-get install` system-deps layer (**418.2 MB**); the whole image is **1.83 GB**. The claude-code share swings a lot between patch releases — measured in this image: 641 MB at 2.1.238, 743 MB at 2.1.245, 468 MB at 2.1.246 — so re-measure after a bump instead of trusting the last number
+  - Single static binary, **280 MB** unpacked (vendored tree-sitter grammars + a vendored embedding model). **Measured on the built image:** it occupies a **279.6 MB** layer — third-largest, behind the `npm ci` toolchain layer (**586.1 MB**, of which **214 MB** is `@anthropic-ai/claude-code`) and the `apt-get install` system-deps layer (**418.2 MB**); the whole image is **1.58 GB**. The claude-code share swings a lot between patch releases — measured in this image: 641 MB at 2.1.238, 743 MB at 2.1.245, 468 MB at 2.1.246, 214 MB at 2.1.248 — so re-measure after a bump instead of trusting the last number
   - The `-portable` Linux asset is the fully-static build; the plain `linux-*` asset needs glibc >= 2.38 (trixie has 2.41, so both would run — static is chosen to avoid the libc coupling)
   - Local SQLite graph under `$CBM_CACHE_DIR`, no API keys. Upstream states "zero network requests, no telemetry, no background version checks" — **not independently verified here**; note the binary does have a manual `update` subcommand and a `CBM_DOWNLOAD_URL` override, i.e. a download path exists (unlike codegraph, there is no env switch to forbid it; nothing invokes it in this image)
   - Registered as the `codebase-memory-mcp` MCP server, invoked with **no args** (the binary detects MCP stdio mode itself)
