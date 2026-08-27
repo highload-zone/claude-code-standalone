@@ -10,10 +10,10 @@ This is a security-hardened Docker container that runs Claude Code with pre-inst
 
 ### Container Structure
 
-The container is built on Node.js 22 (LTS) with the following layers:
+The container is built on Node.js 24 (LTS) with the following layers:
 
 1. **Base System** - Debian Trixie (glibc 2.41) with hardened security settings
-2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.246), OpenSpec (1.10.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.22.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.8.1)
+2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.248), OpenSpec (1.10.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.24.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.9.1)
 3. **OpenSpec** - initialized into the build HOME (`/home/claude`) at build time, with telemetry disabled via `OPENSPEC_TELEMETRY=0`. The project itself is NOT initialized at build — it is overlaid by the runtime mount
 4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified); `rtk init -g --auto-patch` installs a Claude Code PreToolUse hook that rewrites Bash commands through `rtk`
 5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.9.1`
@@ -65,7 +65,7 @@ Claude Code configuration is pre-configured in the container:
 docker build -t claude-code-standalone .
 
 # To change a pinned npm CLI version: edit tools/package.json, then regenerate the
-# lockfile inside node:22 (see "Environment Variables" → npm CLI versions), and rebuild.
+# lockfile inside node:24 (see "Environment Variables" → npm CLI versions), and rebuild.
 
 # Run Claude Code interactively
 ./run_claude.sh
@@ -139,11 +139,10 @@ stdio MCP server invokes a **pre-installed, pinned binary** (`mcp-server-sequent
 `npx -y <pkg>`. Nothing is fetched from the network to start a server. HTTP servers (`context7`,
 `cloudflare-docs`) have nothing to pre-install by construction. **Verified by build+run:** all **six**
 servers show `✓ Connected` under the **default** `MCP_TIMEOUT=10000` (10s) — the whole
-`claude mcp list` health check takes ~4.1s wall-clock (median of 3 runs, 4.0-4.2s), including the
+`claude mcp list` health check takes ~5.1s wall-clock (median of 3 runs, 4.7-5.2s), including the
 280 MB `codebase-memory-mcp` binary (its size does not cost cold-start latency). There is no
 package download to race the timeout (the earlier `npx -y` form intermittently failed on a cold
-cache). When adding a
-new server, pre-install its package globally in the `Dockerfile` at a pinned version and point the
+cache). When adding a new server, pre-install its package globally in the `Dockerfile` at a pinned version and point the
 config at the installed bin — do **not** use `npx -y`. For an **HTTP** server there is nothing to
 pre-install: add the `type: http` + `url` entry only.
 
@@ -259,17 +258,29 @@ Unlike CodeGraph, codebase-memory-mcp does **not** write into the indexed tree: 
 **npm CLI versions are NOT build args.** claude-code, openspec, codegraph, caveman-shrink,
 the stdio MCP servers, and dev tools are all pinned in `tools/package.json` and locked (with
 sha512 integrity) in `tools/package-lock.json`, installed via `npm ci`. To change a version:
-edit `tools/package.json`, then regenerate the lockfile **inside node:22** (host npm may write a
+edit `tools/package.json`, then regenerate the lockfile **inside node:24** (host npm may write a
 different `lockfileVersion`):
 ```bash
-docker run --rm -v "$PWD/tools:/w" -w /w node:22-trixie-slim npm install --package-lock-only
+docker run --rm -v "$PWD/tools:/w" -w /w node:24-trixie-slim npm install --package-lock-only
 ```
-After regenerating, run `npm audit` in the same `node:22` image — and, when a clean non-breaking
+After regenerating, run `npm audit` in the same `node:24` image — and, when a clean non-breaking
 fix is offered, `npm audit fix --package-lock-only` — so transitive security advisories surface and
 get patched instead of silently shipping. `npm install` keeps in-range pinned transitive versions,
-so an already-applied patch is not downgraded by a later regen. Pin only Node-22-compatible versions — check `npm view <pkg>@<ver> engines.node`. The build-time
+so an already-applied patch is not downgraded by a later regen. Pin only Node-24-compatible versions — check `npm view <pkg>@<ver> engines.node`. The build-time
 gate runs each dev tool's `--version` to catch an incompatible engine (this is how the earlier
 pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
+
+**`allowScripts` in `tools/package.json` is load-bearing, not decoration.** The node:24 base ships
+npm 11.19, which gates package install scripts: an unapproved one still runs, but `npm ci` prints
+`npm warn install-scripts … not yet covered by allowScripts`, and the npm 12 line is where that
+becomes a refusal. `@anthropic-ai/claude-code` needs its `postinstall` (`node install.cjs`): the
+npm tarball is only 179 kB and ships a ~1 kB `bin/claude.exe` **placeholder** — the postinstall is
+what hard-links the real 248 MB binary from the platform package over it. A silently skipped script
+would therefore produce a green build with a stub `claude`. The approval is **version-pinned**
+(`"@anthropic-ai/claude-code@2.1.248": true`), so a claude-code bump brings the warning back until
+the entry is updated too — that is the intended reminder, not a bug. **Measured on node:24**: only
+`{"<pkg>@<version>": true}` or `{"<pkg>": true}` silence it; a semver **string** value
+(`"2.1.248"`, `"*"`, `">=2"`) is ignored and the warning stays.
 
 **`typescript` is deliberately held at 6.0.3, NOT the `latest` dist-tag.** `latest` is 7.x, the
 native (Go) compiler rewrite, whose npm package no longer exposes the full JS compiler API. Under
@@ -361,7 +372,7 @@ prints a constant without loading the compiler; the build gate therefore also ru
   parser (`1/true/yes/on`). `autoMode.classifyAllShell`,
   `agentPushNotifEnabled` and `workflowSizeGuideline` are *accepted* — they appear in the 2.1.220
   settings-key table, their values come from the binary's own enum/parser, and `claude doctor` on
-  **2.1.246** reports "No installation issues found." (the only note is the expected Remote Control
+  **2.1.248** reports "No installation issues found." (the only note is the expected Remote Control
   full-scope-token caveat) — but their runtime effect was **not** observed: the workflow-size system
   reminder is not injected in `-p`/headless runs, and `agentPushNotifEnabled` cannot do anything until
   Remote Control actually connects (which needs `claude auth login`).
@@ -407,7 +418,7 @@ One extra entrypoint exists beside the autonomous `run_claude.sh`; it shares the
 - **ESLint** - JavaScript/TypeScript linting
 - **Prettier** - Code formatting
 - **OpenSpec** - `@fission-ai/openspec` CLI for spec-driven development (`openspec` binary)
-  - Installed globally via npm; requires Node.js >= 20.19.0 (satisfied by the `node:22-trixie-slim` base)
+  - Installed globally via npm; requires Node.js >= 20.19.0 (satisfied by the `node:24-trixie-slim` base)
   - Initialized at build time into the build HOME via `openspec init /home/claude --tools claude --force` (non-interactive). This bakes `~/.claude/commands/opsx` + skills, which the entrypoint copies into the runtime HOME — so the opsx slash-commands are available. (The project mount is NOT initialized at build because it is overlaid at runtime.)
   - Run `openspec init` inside the actual project (`/workspace/project`, read-write) on demand
   - Telemetry is opt-out only via the `OPENSPEC_TELEMETRY=0` env var (no `telemetry.enabled` config key exists); set as baked-in ENV, covering build and runtime
@@ -427,14 +438,14 @@ One extra entrypoint exists beside the autonomous `run_claude.sh`; it shares the
   - Source: https://github.com/JuliusBrussee/caveman
 - **CodeGraph** - Pre-indexed code knowledge graph (symbols, call graph, impact) served to agents over MCP (`codegraph` binary)
   - Installed via `npm ci` from the locked toolchain (`@colbymchenry/codegraph@1.5.0`); also registered as the `codegraph` MCP server, wrapped by `caveman-shrink` to compress its (verbose) tool descriptions — verified `✓ Connected` (see "MCP Servers")
-  - **Not pure JS:** the npm package is a thin shim; the real artifact is a per-platform optionalDependency (`@colbymchenry/codegraph-linux-x64`) bundling a vendored Node 24 runtime + prebuilt binary. `codegraph --help` at build time verifies the binary runs (**verified**: the vendored Node 24 binary runs on `node:22-trixie-slim`)
+  - **Not pure JS:** the npm package is a thin shim; the real artifact is a per-platform optionalDependency (`@colbymchenry/codegraph-linux-x64`) bundling a vendored Node 24 runtime + prebuilt binary. `codegraph --help` at build time verifies the binary runs (**verified**: the vendored Node 24 binary runs on `node:24-trixie-slim`)
   - `CODEGRAPH_NO_DOWNLOAD=1` (baked-in ENV) forbids the shim's runtime fallback that fetches the binary from GitHub Releases — the binary must come from the npm registry only
   - 100% local: local SQLite index (`.codegraph/codegraph.db`, FTS5), no API keys, no external services
   - See "CodeGraph indexing" for the index write-location constraint in this container
   - Source: https://github.com/colbymchenry/codegraph
 - **codebase-memory-mcp** - Tree-sitter code-intelligence engine (knowledge graph of functions, classes, call chains, HTTP routes) served over MCP (`codebase-memory-mcp` binary)
   - **Installed from the GitHub release, NOT from npm** (`ARG CBM_VERSION=v0.10.8`, per-arch `-portable` static asset, sha256-pinned in the Dockerfile). The npm package `codebase-memory-mcp` is a 12 kB shim: its `postinstall` downloads the binary from GitHub Releases outside npm's sha512 integrity, treats a missing `checksums.txt` as non-fatal (silently skipping verification), and `bin.js` re-downloads the binary on first run if absent — a runtime fetch, which this image forbids
-  - Single static binary, **280 MB** unpacked (vendored tree-sitter grammars + a vendored embedding model). **Measured on the built image:** it occupies a **279.6 MB** layer — third-largest, behind the `npm ci` toolchain layer (**856.9 MB**, of which **468 MB** is `@anthropic-ai/claude-code`) and the `apt-get install` system-deps layer (**426.2 MB**); the whole image is **1.84 GB**. The claude-code share swings a lot between patch releases — measured in this image: 641 MB at 2.1.238, 743 MB at 2.1.245, 468 MB at 2.1.246 — so re-measure after a bump instead of trusting the last number
+  - Single static binary, **280 MB** unpacked (vendored tree-sitter grammars + a vendored embedding model). **Measured on the built image:** it occupies a **279.6 MB** layer — third-largest, behind the `npm ci` toolchain layer (**586.1 MB**, of which **214 MB** is `@anthropic-ai/claude-code`) and the `apt-get install` system-deps layer (**418.2 MB**); the whole image is **1.58 GB**. The claude-code share swings a lot between patch releases — measured in this image: 641 MB at 2.1.238, 743 MB at 2.1.245, 468 MB at 2.1.246, 214 MB at 2.1.248 — so re-measure after a bump instead of trusting the last number
   - The `-portable` Linux asset is the fully-static build; the plain `linux-*` asset needs glibc >= 2.38 (trixie has 2.41, so both would run — static is chosen to avoid the libc coupling)
   - Local SQLite graph under `$CBM_CACHE_DIR`, no API keys. Upstream states "zero network requests, no telemetry, no background version checks" — **not independently verified here**; note the binary does have a manual `update` subcommand and a `CBM_DOWNLOAD_URL` override, i.e. a download path exists (unlike codegraph, there is no env switch to forbid it; nothing invokes it in this image)
   - Registered as the `codebase-memory-mcp` MCP server, invoked with **no args** (the binary detects MCP stdio mode itself)
@@ -512,7 +523,7 @@ Inside the debug shell, you can run diagnostics manually:
 
 - `Dockerfile` - Complete container build configuration
 - `tools/package.json` - Pinned npm CLI toolchain (claude-code, openspec, codegraph, caveman-shrink, MCP servers, dev tools) — exact versions, single source of truth
-- `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:22 after editing package.json
+- `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:24 after editing package.json
 - `claude-config.json` - Claude Code configuration with all permissions
 - `settings.local.json` - Local Claude settings (permissions allow/deny/ask)
 - `settings.json` - User Claude settings baked to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `autoMode.classifyAllShell: true`, `advisorModel: "opus"`, `agentPushNotifEnabled: true`, `workflowSizeGuideline: "small"`, `autoUpdates: false`, `tui: "default"`, and the `statusLine` (wired to `/usr/local/bin/claude-statusline.sh`)

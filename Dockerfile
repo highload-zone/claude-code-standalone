@@ -1,4 +1,4 @@
-FROM node:22-trixie-slim
+FROM node:24-trixie-slim
 
 # Build arguments
 ARG USER_ID=1001
@@ -16,7 +16,7 @@ ARG RTK_VERSION=v0.45.0
 ARG CBM_VERSION=v0.10.8
 
 # Create non-root user with specific UID/GID.
-# Free the requested UID/GID if the base image already uses it (node:22 ships a
+# Free the requested UID/GID if the base image already uses it (node:24 ships a
 # `node` user at uid/gid 1000) so the image can be built with --build-arg
 # USER_ID=$(id -u) for the read-write dev mode without a uid clash.
 # ALSO remove the base `node` user (uid/gid 1000) unconditionally: the Dev
@@ -115,7 +115,7 @@ RUN case "$TARGETARCH" in \
 # Toolchain: ALL global npm CLIs, locked + integrity-verified via `npm ci`
 # ============================================================================
 # Single source of truth for npm versions: tools/package.json + the committed
-# tools/package-lock.json (regenerate the lock INSIDE node:22 after any change —
+# tools/package-lock.json (regenerate the lock INSIDE node:24 after any change —
 # host-npm lockfileVersion can differ). `npm ci` installs the exact locked
 # tarballs and verifies each sha512 integrity hash → bit-for-bit reproducible npm
 # bytes, with nothing resolved at build time (this replaces the old per-package
@@ -142,7 +142,7 @@ RUN cd /opt/toolchain && \
 ENV PATH="/opt/toolchain/node_modules/.bin:${PATH}"
 # Verify the locked CLIs actually RUN on this base's Node (not just resolve on
 # PATH) — a pinned version may declare a Node engine this base doesn't satisfy
-# (e.g. pnpm 11 needs Node >=22.13; the base is node:22 which satisfies it). Running each `--version`
+# (e.g. pnpm 11 needs Node >=22.13; the base is node:24 which satisfies it). Running each `--version`
 # (or `--help`) catches that at build time. codegraph uses `--help` (vendored Node
 # 24 binary; `--version` is undocumented); caveman-shrink prints usage on no-args.
 # dev tools: run `--version` (this is what catches an incompatible Node engine).
