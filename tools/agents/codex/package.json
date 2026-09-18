@@ -1,0 +1,9 @@
+{
+  "name": "agent-container-codex",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Codex CLI only, installed into the codex image. The npm package is a thin launcher (bin/codex.js) whose per-platform optionalDependency carries the binary. It declares no install scripts, so no allowScripts entry is needed.",
+  "dependencies": {
+    "@openai/codex": "0.155.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "agent-container-claude",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Claude Code CLI only, installed into the claude image. `allowScripts` is load-bearing: @anthropic-ai/claude-code needs its postinstall (node install.cjs) to hard-link the real binary over the ~1 kB placeholder in the npm tarball. The approval is version-pinned on purpose — a version bump brings the npm 11 warning back until this entry is updated.",
+  "allowScripts": {
+    "@anthropic-ai/claude-code@2.1.248": true
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.248"
+  }
+}

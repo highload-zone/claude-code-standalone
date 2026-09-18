@@ -20,7 +20,8 @@ We aim to acknowledge reports within a few business days.
 
 ## Scope
 
-This repository ships a Docker image that runs Claude Code under a hardened container profile.
+This repository ships three Docker images (Claude Code, Codex, OpenCode) built from one Dockerfile,
+each running under the same hardened container profile.
 Security boundaries (enforced by the wrapper scripts at `docker run` time):
 
 - Non-root execution (UID 1001), all capabilities dropped, no privilege escalation
@@ -42,7 +43,8 @@ This image is expected to run on a host where the **Docker daemon runs as root**
 may be root. Consequently:
 
 - **On a root-Docker host, `docker run` is equivalent to host root.** The wrapper scripts
-  (`run_claude.sh`, `debug-shell.sh`) are **NOT a security boundary against a hostile operator** —
+  (`run_agent.sh`, `run_claude.sh`, `debug-shell.sh`, the installer's `agent-box` launchers) are
+  **NOT a security boundary against a hostile operator** —
   anyone who can run Docker can ignore them and mount `/`, add capabilities, or pass `--privileged`.
   The scripts' guard checks (refusing `--privileged`, `--pid=host`, `docker.sock`, uid 0, etc.) only
   catch **accidental misconfiguration**, not a deliberate operator.
@@ -105,8 +107,6 @@ Guardrails:
   `DEPLOY_KEY=/path/to/key` — the agent can push only to that one repo and **cannot ssh elsewhere**
   (deliberately not ssh-agent forwarding, which would authenticate to any SSH host). Without it,
   edit + local commit work; push does not.
-- **Project git hooks are disabled** in the container (`core.hooksPath=/dev/null`) so an injected
-  `.git/hooks` script does not execute on git operations.
 - **Footgun guards** (refuse `--privileged`/`docker.sock`/`--pid=host`/`--network=host`/`--cap-add`/
   uid 0) as above.
 - Writable HOME is a tmpfs; the baked agent state is copied into it at start. The image's baked
@@ -114,10 +114,11 @@ Guardrails:
 
 ## Dev Container mode
 
-One additional entrypoint exists for IDE use; it changes the posture relative to the autonomous
-`run_claude.sh` entrypoint and is documented here.
+Additional entrypoints exist for IDE use; they change the posture relative to the autonomous
+`run_agent.sh` entrypoint and are documented here.
 
-- **Dev Container (`.devcontainer/devcontainer.json`).** You work interactively in the container; the
+- **Dev Container (`.devcontainer/devcontainer.json` for claude, `.devcontainer/codex/` and
+  `.devcontainer/opencode/`).** You work interactively in the container; the
   auto-launch ENTRYPOINT is suppressed (`overrideCommand: true`). It keeps the hardened profile but
   adds back a **minimal capability set** (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID`) that
   the one-time uid-remap (`updateRemoteUserUID`) needs at container start to chown the home dir; the
@@ -127,9 +128,12 @@ One additional entrypoint exists for IDE use; it changes the posture relative to
 
 ## Secrets
 
-API tokens are consumed via a runtime `.env` file (`CLAUDE_CODE_OAUTH_TOKEN`, `CONTEXT7_API_KEY`,
-`PERPLEXITY_API_KEY`). They are **never** committed (`.env` is gitignored) and **never** baked into
-the image — they are passed at `docker run` time only. `.env.example` ships placeholders only.
+API tokens are consumed via a runtime `.env` file (`CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_API_KEY`,
+provider keys for OpenCode, `CONTEXT7_API_KEY`, `PERPLEXITY_API_KEY`). They are **never** committed
+(`.env` is gitignored) and **never** baked into the image — `render-mcp-configs.sh` renders only
+`${VAR}` references, and the values are passed at `docker run` time only. `.env.example` ships
+placeholders only. Interactive logins (`codex login`, `opencode auth login`, `claude auth login`)
+are stored in the mounted per-agent login directory on the host — treat that directory as secret.
 
 If you ever find a leaked secret in this repository's history, treat the corresponding token as
 compromised and rotate it immediately.

@@ -1,14 +1,21 @@
-# claude-code-standalone
+# agent-standalone
 
-Security-hardened Docker container for running [Claude Code](https://docs.anthropic.com/claude-code)
-as an autonomous agent over your project. Built on Node.js 24 LTS (Debian Trixie slim, glibc 2.41),
-multi-arch (linux/amd64 + linux/arm64), with a pinned, lockfile-controlled CLI toolchain and a
-curated set of MCP servers.
+Security-hardened Docker images for running a coding agent — **[Claude
+Code](https://docs.anthropic.com/claude-code)**, **Codex** or **OpenCode** — as an autonomous agent
+over your project. One repository, three images, one shared toolchain (Node.js 24 LTS / Debian
+Trixie slim, glibc 2.41, multi-arch linux/amd64 + linux/arm64), adapted per agent: MCP servers, RTK
+command rewriting and OpenSpec are wired in each agent's own format.
+
+| Tag | Agent CLI |
+|-----|-----------|
+| `:claude` (and `:latest`) | Claude Code 2.1.248 |
+| `:codex` | Codex CLI 0.155.0 |
+| `:opencode` | OpenCode 1.18.31 |
 
 ## Getting started
 
-The prebuilt multi-arch image is published to GHCR — **you don't clone this repo or build anything**.
-Requires Docker and a Claude Code OAuth token (`claude setup-token`).
+The prebuilt multi-arch images are published to GHCR — **you don't clone this repo or build
+anything**. Requires Docker; each agent needs its own credentials (below).
 
 ### Quick install (Linux / macOS)
 
@@ -16,14 +23,21 @@ Requires Docker and a Claude Code OAuth token (`claude setup-token`).
 curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalone/main/install.sh | bash
 ```
 
-The installer pulls the GHCR image, asks for your OAuth token once (stored in
-`~/.config/claude-standalone/claude.env`, `chmod 600`), and installs a `claude-box` launcher into
-`~/.local/bin`. Then, from any project directory (mounted **read-write**):
+The installer pulls the three GHCR images, asks for your Claude OAuth token once (stored in
+`~/.config/agent-standalone/agent.env`, `chmod 600`), and installs launchers into `~/.local/bin`.
+Then, from any project directory (mounted **read-write**):
 
 ```bash
-claude-box                  # hardened agent over the current directory
+claude-box                  # hardened Claude Code over the current directory
+codex-box                   # hardened Codex
+opencode-box                # hardened OpenCode
+agent-box codex mcp list    # generic launcher; args forward to the agent
 claude-box --model opus     # extra args pass through to claude
 ```
+
+Each launcher forwards its arguments verbatim, so introspection runs exactly the agent's command:
+`claude-box mcp list` → `claude mcp list`, `codex-box mcp list` → `codex mcp list`, and so on. The
+same holds for a raw `docker run`: `docker run … <image> mcp list`.
 
 If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add (e.g.
 `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`).
@@ -34,35 +48,47 @@ curl -fsSL https://raw.githubusercontent.com/highload-zone/claude-code-standalon
 less install.sh && bash install.sh
 
 CLAUDE_CODE_OAUTH_TOKEN=... bash install.sh   # non-interactive (skips the token prompt)
+AGENT_IMAGES="claude codex" bash install.sh   # pull/install only a subset (default: all three)
 CLAUDE_RESOURCES_MODE=mount bash install.sh   # non-interactive resource choice: mount | copy | skip
-bash install.sh --uninstall                   # remove the launcher (config is left in place)
+bash install.sh --uninstall                   # remove the launchers (config is left in place)
 ```
 
-**Your local agents, commands, and skills.** If the installer finds `~/.claude/agents`,
+**Persistent logins.** Each launcher mounts a host directory for that agent's credentials
+(`~/.config/agent-standalone/login/<agent>`), so `claude auth login`, `codex login` and
+`opencode auth login` survive a container restart. On first start the baked config is seeded with
+no-clobber, so a host credential/config file is never overwritten. Disable with `AGENT_LOGIN_MOUNT=0`.
+
+**Your local Claude agents, commands, and skills.** If the installer finds `~/.claude/agents`,
 `~/.claude/commands`, or `~/.claude/skills` on the host, it offers to pass them through to the
-container: **mount** the live path (default — edits on the host show up next run), **copy** a
-snapshot into `~/.config/claude-standalone/resources/`, or **skip**. `claude-box` mounts the chosen
+claude image: **mount** the live path (default — edits on the host show up next run), **copy** a
+snapshot into `~/.config/agent-standalone/resources/`, or **skip**. `claude-box` mounts the chosen
 paths read-only and the container merges them **over** its baked state, so your resources win on a
 name clash while the image's own commands/skills (e.g. `opsx`) still work.
 
-`claude-box` forwards your host git identity (so commits are attributed to you) and, if you set
-`DEPLOY_KEY=/path/to/scoped_key`, mounts it read-only to enable `git push` (see [SECURITY.md](./SECURITY.md)).
+The launchers forward your host git identity (so commits are attributed to you) and, if you set
+`DEPLOY_KEY=/path/to/scoped_key`, mount it read-only to enable `git push` (see [SECURITY.md](./SECURITY.md)).
 
 ### Without the installer — one `docker run`
 
-Save your token once, then run the image directly. The token file is read by `--env-file`, so it
+Save your credentials once, then run the image directly. The env file is read by `--env-file`, so it
 must be raw `KEY=value` (no quotes, no `export`):
 
 ```bash
-mkdir -p ~/.config/claude-standalone
-printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' 'YOUR_TOKEN' > ~/.config/claude-standalone/claude.env
-chmod 600 ~/.config/claude-standalone/claude.env
-# optional MCP keys: add CONTEXT7_API_KEY=... / PERPLEXITY_API_KEY=... lines
+mkdir -p ~/.config/agent-standalone
+cat > ~/.config/agent-standalone/agent.env <<'EOF'
+CLAUDE_CODE_OAUTH_TOKEN=YOUR_TOKEN     # claude
+CODEX_API_KEY=sk-...                   # codex (or use `codex login`)
+OPENAI_API_KEY=sk-...                  # opencode (or use `opencode auth login`)
+CONTEXT7_API_KEY=...
+PERPLEXITY_API_KEY=...
+EOF
+chmod 600 ~/.config/agent-standalone/agent.env
 
-docker pull ghcr.io/highload-zone/claude-code-standalone:latest
+docker pull ghcr.io/highload-zone/claude-code-standalone:claude   # or :codex / :opencode
 ```
 
-From the project directory you want the agent to work on:
+From the project directory you want the agent to work on (swap the image tag and, if you like, add a
+`-v <host-login-dir>:/home/agent/<ctr-path>` mount for login persistence):
 
 ```bash
 docker run -it --rm \
@@ -71,8 +97,12 @@ docker run -it --rm \
   --tmpfs /home/agent:exec,mode=1777,size=512m -e HOME=/home/agent \
   --tmpfs /tmp:noexec,nosuid,size=100m \
   -v "$PWD:/workspace/project:rw" -w /workspace/project \
-  --env-file ~/.config/claude-standalone/claude.env \
-  ghcr.io/highload-zone/claude-code-standalone:latest
+  -v ~/.config/agent-standalone/login/claude:/home/agent/.claude \
+  --env-file ~/.config/agent-standalone/agent.env \
+  ghcr.io/highload-zone/claude-code-standalone:claude
+
+# introspect without launching the TUI:
+docker run --rm … ghcr.io/highload-zone/claude-code-standalone:codex mcp list
 ```
 
 > **Why the command is long — and don't shorten it.** The image is self-contained (entrypoint, tools,
@@ -111,8 +141,8 @@ project (edit / commit / push) inside that boundary.
 
 ## Security model
 
-A single mode. The wrapper scripts (`run_claude.sh`, `debug-shell.sh`) apply hardening at
-`docker run` time:
+A single mode. The wrapper scripts (`run_agent.sh`, `run_claude.sh`, `debug-shell.sh`) and the
+installer's `agent-box` launchers apply hardening at `docker run` time:
 
 - **`--user $(id -u):$(id -g)`** — runs as your host user so it owns the read-write project mount
   (one image works for any uid). All Linux capabilities dropped (`--cap-drop=ALL`).
@@ -176,16 +206,30 @@ Opus (e.g. `--model fable`, where an Opus advisor is rejected).
 ## What's inside
 
 Base: `node:24-trixie-slim` (Node 24 LTS, Debian 13 / glibc 2.41). Multi-arch (amd64 + arm64).
+Built from one `Dockerfile` with three targets (`--target claude|codex|opencode`).
 
-Toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`, sha512
-integrity, exact versions):
+Shared toolchain pinned in `tools/package.json`, locked in `tools/package-lock.json` (`npm ci`,
+sha512 integrity, exact versions):
 
-- `@anthropic-ai/claude-code` (2.1.248), `@fission-ai/openspec` (1.10.0)
+- `@fission-ai/openspec` (1.10.0)
 - `@colbymchenry/codegraph` (1.5.0, MCP) wrapped by `caveman-shrink` (0.1.0)
 - MCP servers: `sequential-thinking`, `context7` (HTTP), `cloudflare-docs` (HTTP, no API key),
   `perplexity`, `codebase-memory-mcp` (GitHub-release binary, see below)
-- caveman skill (plugin, tag `v1.9.1`)
 - Dev tools: `pnpm` 11.24.0, `typescript` 6.0.3, `ts-node` 10.9.2, `prettier` 3.9.6, `eslint` 10.9.1
+
+Per-agent CLI, installed only into its own image (`tools/agents/<agent>/`, own lockfile):
+`@anthropic-ai/claude-code` 2.1.248, `@openai/codex` 0.155.0, `opencode-ai` 1.18.31. Each image also
+carries that agent's baked config and integration:
+
+- **MCP:** one source of truth (`mcp-servers.json`) rendered per agent by `render-mcp-configs.sh` —
+  Claude's native format, Codex `[mcp_servers.*]` TOML, OpenCode's `mcp` JSON. Secrets are never
+  baked: `${VAR}` becomes Claude's literal reference, Codex `env_vars`/`env_http_headers`, OpenCode
+  `{env:VAR}`.
+- **RTK** (v0.45.0): Claude Code PreToolUse hook, Codex `$CODEX_HOME/AGENTS.md` + `RTK.md`, OpenCode
+  `~/.config/opencode/plugins/rtk.ts`.
+- **OpenSpec:** `~/.claude/{commands/opsx,skills}`, `~/.agents/skills` (Codex), and
+  `~/.config/opencode/{skills,commands}` (OpenCode).
+- **Caveman** (plugin, tag `v1.9.1`) is Claude Code-only.
 
 GitHub-release binaries (per-arch, sha256-pinned): `rtk` (v0.45.0), `git-delta` (0.19.2),
 `codebase-memory-mcp` (v0.10.8, MCP — a ~280 MB static binary; installed from the release, not from
@@ -197,7 +241,10 @@ See [CLAUDE.md](./CLAUDE.md) for the full architecture and per-component details
 ## Requirements
 
 - Docker
-- A Claude Code OAuth token (`claude setup-token`)
+- Credentials for the agent(s) you run:
+  - **claude:** an OAuth token (`claude setup-token`) or `claude auth login`
+  - **codex:** `CODEX_API_KEY` (non-interactive) or `codex login`
+  - **opencode:** provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …) or `opencode auth login`
 - (optional) Context7 / Perplexity API keys for those MCP servers (`cloudflare-docs` needs none)
 - (optional) a scoped git deploy key if you want the agent to `git push`
 
@@ -205,20 +252,21 @@ See [CLAUDE.md](./CLAUDE.md) for the full architecture and per-component details
 
 ```bash
 cp .env.example .env
-# Fill in CLAUDE_CODE_OAUTH_TOKEN (required) and any optional keys.
+# Fill in the credentials for the agent(s) you use and any optional MCP keys.
 # .env is gitignored and must never be committed.
 ```
 
 ## Container image (GHCR)
 
-CI publishes a multi-arch image (amd64 + arm64) to GitHub Container Registry:
+CI publishes three multi-arch images (amd64 + arm64) to GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/highload-zone/claude-code-standalone:latest
+docker pull ghcr.io/highload-zone/claude-code-standalone:claude    # or :codex / :opencode
 ```
 
-- **Versioning is pinned by releases.** A git tag `vX.Y.Z` (a Release) publishes `:X.Y.Z`, `:X.Y`,
-  `:X`. `main` publishes `:latest`; every build also gets `:sha-<short>`.
+- **Versioning is pinned by releases.** A git tag `vX.Y.Z` (a Release) publishes `:X.Y.Z-<agent>`,
+  `:X.Y-<agent>`, `:X-<agent>`. `main` publishes `:<agent>`; the claude image also gets `:latest`.
+  Every build also gets `:sha-<short>-<agent>`.
 - Built with the built-in `GITHUB_TOKEN` (`packages: write`) — no extra secrets. Pull requests only
   build for verification (no push).
 - The GHCR package may be created **private** on first publish — make it public in the repo's
@@ -227,36 +275,39 @@ docker pull ghcr.io/highload-zone/claude-code-standalone:latest
 ## Build (locally)
 
 ```bash
-./build.sh           # build claude-code-standalone:latest (npm versions from the lockfile)
-./build-nocache.sh   # clean build
+./build.sh                  # all three: :claude, :codex, :opencode (and :latest = claude)
+./build.sh codex            # just one target
+./build-nocache.sh claude   # clean build of one target
 ```
 
-To change a pinned tool version, edit `tools/package.json`, then regenerate the lockfile inside
-Node 24:
-
-```bash
-docker run --rm -v "$PWD/tools:/w" -w /w node:24-trixie-slim npm install --package-lock-only
-```
+To change a pinned tool version: edit `tools/package.json` (shared) or
+`tools/agents/<agent>/package.json` (agent CLI), then regenerate the matching lockfile inside Node 24
+(`--package-lock-only`, one command per changed package dir).
 
 ## Run
 
 From your project directory:
 
 ```bash
-./run_claude.sh                 # autonomous Claude Code agent over the current dir (read-write)
-./run_claude.sh --model opus    # pass-through Claude Code args
-./debug-shell.sh                # bash shell inside the container
-./run-diagnostics.sh            # MCP server diagnostics
+./run_agent.sh claude                 # autonomous Claude Code agent over the current dir (read-write)
+./run_agent.sh codex                  # Codex
+./run_agent.sh opencode               # OpenCode
+./run_agent.sh codex mcp list         # args forward to the agent ('codex mcp list')
+./debug-shell.sh codex                # bash shell inside the codex image
+./run-diagnostics.sh codex            # MCP server diagnostics for that image
 ```
 
+`./run_claude.sh [args]` is kept as a back-compat alias for `./run_agent.sh claude [args]`.
+
 The current directory is mounted **read-write at `/workspace/project`** and the container runs as your host
-user, so the agent can edit, commit, and push. To enable `git push`, point `DEPLOY_KEY` at a
-**scoped** repo deploy key (mounted read-only, used with `IdentitiesOnly` — the agent can push only
-to that repo and cannot ssh elsewhere):
+user, so the agent can edit, commit, and push. A per-agent login directory is mounted from
+`~/.config/agent-standalone/login/<agent>` (disable with `AGENT_LOGIN_MOUNT=0`). To enable `git push`,
+point `DEPLOY_KEY` at a **scoped** repo deploy key (mounted read-only, used with `IdentitiesOnly` —
+the agent can push only to that repo and cannot ssh elsewhere):
 
 ```bash
 export DEPLOY_KEY=/path/to/repo_deploy_key
-./run_claude.sh
+./run_agent.sh claude
 ```
 
 Without `DEPLOY_KEY`, edit + local commit work; push does not. Git commit identity is taken from your
@@ -270,16 +321,17 @@ host `git config` (passed as env), so commits are attributed to you.
 
 ## Dev Container
 
-`.devcontainer/devcontainer.json` opens your project **inside** the hardened image as an interactive
-development environment (VS Code Dev Containers, JetBrains Gateway, GitHub Codespaces, or the
-`devcontainer` CLI). Unlike the agent entrypoint, you work in the container shell and run `claude`
-yourself; the image's auto-launch ENTRYPOINT is suppressed (`overrideCommand: true`).
+Three configs open your project **inside** a hardened image as an interactive development
+environment (VS Code Dev Containers, JetBrains Gateway, GitHub Codespaces, or the `devcontainer`
+CLI): `.devcontainer/devcontainer.json` (claude, the default), `.devcontainer/codex/` and
+`.devcontainer/opencode/`. Unlike the agent entrypoint, you work in the container shell and run the
+agent yourself; the image's auto-launch ENTRYPOINT is suppressed (`overrideCommand: true`).
 
-- Pulls `ghcr.io/highload-zone/claude-code-standalone:latest` (pin a release tag for reproducibility).
+- Pulls the matching `:<agent>` image tag (pin a release tag for reproducibility).
 - Keeps the hardened profile (`cap-drop=ALL` + minimal caps for the uid-remap, `no-new-privileges`)
   with a raised `--pids-limit=512` for interactive tooling.
 - Runs as the non-root `claude` user with `updateRemoteUserUID` so workspace files are owned by you.
-- Reads `CLAUDE_CODE_OAUTH_TOKEN` / `CONTEXT7_API_KEY` / `PERPLEXITY_API_KEY` from your host env.
+- Reads the agent's credentials plus `CONTEXT7_API_KEY` / `PERPLEXITY_API_KEY` from your host env.
 
 ## Security disclosures
 

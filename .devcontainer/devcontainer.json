@@ -1,26 +1,26 @@
-// Dev Container for claude-code-standalone.
+// Dev Container for the claude agent image (default config).
 //
 // Opens your project INSIDE the hardened container as an interactive development
 // environment (VS Code Dev Containers, JetBrains Gateway, GitHub Codespaces, or
-// the `devcontainer` CLI). This is distinct from the agent entrypoint
-// run_claude.sh, which launches an autonomous Claude Code TUI.
-// Here YOU work in the container shell and invoke `claude` yourself when you want.
+// the `devcontainer` CLI). This is distinct from run_agent.sh, which launches an
+// autonomous agent TUI. Here YOU work in the container shell and invoke `claude`
+// yourself when you want.
 //
-// The image's ENTRYPOINT (claude --remote-control) is intentionally NOT run:
-// "overrideCommand": true makes the dev container keep itself alive with a sleep
-// loop instead, so opening the workspace does not auto-launch the agent.
+// Other agents: .devcontainer/codex/devcontainer.json and
+// .devcontainer/opencode/devcontainer.json select their image tag.
+//
+// The image's ENTRYPOINT is intentionally NOT run: "overrideCommand": true makes
+// the dev container keep itself alive with a sleep loop instead, so opening the
+// workspace does not auto-launch the agent.
 {
-  "name": "claude-code-standalone",
+  "name": "agent-standalone (claude)",
 
-  // Pull the published multi-arch image from GHCR (per project decision). To pin a
-  // version, replace :latest with a release tag, e.g. :1 / :1.2 / :1.2.3.
+  // Pull the published multi-arch image from GHCR. To pin a version, replace the
+  // tag with a release tag, e.g. :1.2.3-claude.
   // To develop against a locally built image instead, comment "image" out and use:
-  //   "build": { "dockerfile": "../Dockerfile" }
-  "image": "ghcr.io/highload-zone/claude-code-standalone:latest",
+  //   "build": { "dockerfile": "../../Dockerfile", "target": "claude" }
+  "image": "ghcr.io/highload-zone/claude-code-standalone:claude",
 
-  // Do NOT run the image ENTRYPOINT (the Claude agent); keep the container alive
-  // for an interactive session. Defaults to true for image-based dev containers,
-  // set explicitly for clarity.
   "overrideCommand": true,
 
   // Run as the image's non-root user. updateRemoteUserUID remaps that user's
@@ -35,14 +35,8 @@
   "workspaceFolder": "/workspace/project",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/project,type=bind,consistency=cached",
 
-  // Hardened profile (per project decision) with a raised pids cap for interactive
-  // dev (test runners / language servers / builds fork many processes).
-  //   - cap-drop=ALL removes every Linux capability, then we add back ONLY the
-  //     minimal set the one-time uid-remap (usermod + chown -R $HOME) needs at
-  //     container start; the dangerous caps (SYS_ADMIN, NET_ADMIN, NET_RAW,
-  //     SYS_PTRACE, SYS_MODULE, …) stay dropped. The interactive `claude` user is
-  //     unprivileged and holds none of these in its effective set.
-  //   - no-new-privileges blocks setuid escalation.
+  // Hardened profile with a raised pids cap for interactive dev (test runners /
+  // language servers / builds fork many processes).
   "runArgs": [
     "--cap-drop=ALL",
     "--cap-add=CHOWN",

@@ -1,0 +1,12 @@
+{
+  "name": "agent-container-opencode",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenCode CLI only, installed into the opencode image. `allowScripts` is load-bearing: opencode-ai's postinstall links the platform binary from its optionalDependency into bin/opencode.exe. Without the approval npm 11 prints install-scripts warnings (and npm 12 would refuse).",
+  "allowScripts": {
+    "opencode-ai@1.18.31": true
+  },
+  "dependencies": {
+    "opencode-ai": "1.18.31"
+  }
+}

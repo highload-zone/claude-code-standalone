@@ -1,0 +1,26 @@
+// Dev Container for the codex agent image. See ../devcontainer.json (claude) for
+// the full rationale; only the image tag and the injected provider keys differ.
+{
+  "name": "agent-standalone (codex)",
+  "image": "ghcr.io/highload-zone/claude-code-standalone:codex",
+  "overrideCommand": true,
+  "remoteUser": "claude",
+  "updateRemoteUserUID": true,
+  "workspaceFolder": "/workspace/project",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/project,type=bind,consistency=cached",
+  "runArgs": [
+    "--cap-drop=ALL",
+    "--cap-add=CHOWN",
+    "--cap-add=DAC_OVERRIDE",
+    "--cap-add=FOWNER",
+    "--cap-add=SETUID",
+    "--cap-add=SETGID",
+    "--security-opt=no-new-privileges:true",
+    "--pids-limit=512"
+  ],
+  "containerEnv": {
+    "CODEX_API_KEY": "${localEnv:CODEX_API_KEY}",
+    "CONTEXT7_API_KEY": "${localEnv:CONTEXT7_API_KEY}",
+    "PERPLEXITY_API_KEY": "${localEnv:PERPLEXITY_API_KEY}"
+  }
+}

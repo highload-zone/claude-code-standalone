@@ -1,7 +1,12 @@
 #!/bin/bash
 
+# MCP diagnostics inside an agent image. AGENT is baked per image; the MCP binary
+# set is shared, but the rendered config location differs per agent.
+
+AGENT="${AGENT:-claude}"
+
 echo "========================================="
-echo "MCP Server Diagnostics"
+echo "MCP Server Diagnostics (agent: $AGENT)"
 echo "========================================="
 echo ""
 
@@ -16,27 +21,54 @@ for bin in mcp-server-sequential-thinking perplexity-mcp codegraph caveman-shrin
 done
 
 echo ""
-echo "2. Checking PATH environment..."
+echo "2. Checking agent CLI..."
+echo "-----------------------------------"
+if command -v "$AGENT" &> /dev/null; then
+    echo "✅ $AGENT -> $(command -v "$AGENT") ($("$AGENT" --version 2>/dev/null | head -1))"
+else
+    echo "❌ $AGENT NOT found in PATH"
+fi
+
+echo ""
+echo "3. Checking PATH environment..."
 echo "-----------------------------------"
 echo "Current PATH: $PATH"
 
 echo ""
-echo "3. Checking Claude Code MCP configuration..."
+echo "4. Checking MCP configuration for '$AGENT'..."
 echo "-----------------------------------"
-if [ -f "$HOME/.claude.json" ]; then
-    echo "Claude config exists at $HOME/.claude.json"
-    echo ""
-    echo "MCP Servers configured:"
-    cat "$HOME/.claude.json" | jq -r '.projects["/workspace/project"].mcpServers | keys[]' 2>&1 || echo "Failed to parse JSON"
-    echo ""
-    echo "Full MCP server configuration:"
-    cat "$HOME/.claude.json" | jq '.projects["/workspace/project"].mcpServers' 2>&1 || echo "Failed to get MCP config"
-else
-    echo "❌ $HOME/.claude.json not found"
-fi
+case "$AGENT" in
+  claude)
+    cfg="$HOME/.claude.json"
+    if [ -f "$cfg" ]; then
+      echo "Claude config: $cfg"
+      jq -r '.projects["/workspace/project"].mcpServers | keys[]' "$cfg" 2>&1 || echo "Failed to parse JSON"
+    else
+      echo "❌ $cfg not found"
+    fi
+    ;;
+  codex)
+    cfg="$HOME/.codex/config.toml"
+    if [ -f "$cfg" ]; then
+      echo "Codex config: $cfg"
+      grep -E '^\[mcp_servers\.' "$cfg" || echo "(no [mcp_servers.*] sections)"
+    else
+      echo "❌ $cfg not found"
+    fi
+    ;;
+  opencode)
+    cfg="$HOME/.config/opencode/opencode.json"
+    if [ -f "$cfg" ]; then
+      echo "OpenCode config: $cfg"
+      jq -r '.mcp | keys[]' "$cfg" 2>&1 || echo "Failed to parse JSON"
+    else
+      echo "❌ $cfg not found"
+    fi
+    ;;
+esac
 
 echo ""
-echo "4. Checking file permissions..."
+echo "5. Checking file permissions..."
 echo "-----------------------------------"
 echo "Current user: $(whoami)"
 echo "Home directory: $HOME"

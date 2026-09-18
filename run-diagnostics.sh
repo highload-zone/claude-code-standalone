@@ -1,17 +1,25 @@
 #!/bin/bash
 
-# MCP Diagnostics Runner
-# Runs diagnostics inside the container
+# MCP diagnostics runner. Runs diagnose-mcp.sh inside an agent image.
+#
+#   ./run-diagnostics.sh            # claude image
+#   ./run-diagnostics.sh codex
+#   ./run-diagnostics.sh opencode
 
 set -e
 
-echo "🔍 Running MCP Server Diagnostics..."
+AGENT="${1:-claude}"
+case "$AGENT" in claude|codex|opencode) ;; *) echo "usage: $0 [claude|codex|opencode]" >&2; exit 2;; esac
+
+IMAGE_BASE="${AGENT_IMAGE_BASE:-claude-code-standalone}"
+IMAGE="${AGENT_IMAGE:-$IMAGE_BASE:$AGENT}"
+
+echo "🔍 Running MCP Server Diagnostics for '$AGENT'..."
 echo ""
 
-# Check if container image exists
-if ! docker images claude-code-standalone | grep -q claude-code-standalone; then
-    echo "❌ Container image 'claude-code-standalone' not found!"
-    echo "Please build the container first: ./build.sh"
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "❌ Container image '$IMAGE' not found!"
+    echo "Please build the container first: ./build.sh $AGENT"
     exit 1
 fi
 
@@ -22,32 +30,23 @@ if [ -f .env ]; then
     set +a
 fi
 
-# Build Docker run command
 DOCKER_ARGS=(
     "run" "--rm" "-it"
     "--entrypoint" "bash"
-    "-e" "CLAUDE_API_KEY=${CLAUDE_API_KEY:-}"
+    "-e" "AGENT=$AGENT"
 )
 
-# Load additional environment variables from .env
-if [ -f .env ]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        var_name=$(echo "$line" | cut -d= -f1)
-        [[ -z "$var_name" ]] && continue
-        var_value="${!var_name:-}"
-        if [ -n "$var_value" ]; then
-            DOCKER_ARGS+=("-e" "$var_name=$var_value")
-        fi
-    done < .env
-fi
+# Pass the runtime env vars the agents need.
+for n in CLAUDE_CODE_OAUTH_TOKEN CODEX_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY CONTEXT7_API_KEY PERPLEXITY_API_KEY; do
+    v="${!n:-}"
+    [ -n "$v" ] && DOCKER_ARGS+=("-e" "$n=$v")
+done
 
-# Run diagnostics inside container
-docker "${DOCKER_ARGS[@]}" claude-code-standalone -c "/app/diagnose-mcp.sh"
+docker "${DOCKER_ARGS[@]}" "$IMAGE" -c "/app/diagnose-mcp.sh"
 
 echo ""
-echo "📋 Next steps based on results:"
-echo "  • If a pre-installed MCP binary is missing: Rebuild container with ./build.sh"
+echo " Next steps based on results:"
+echo "  • If a pre-installed MCP binary is missing: Rebuild container with ./build.sh $AGENT"
 echo "  • If MCP servers fail to start: Check error messages above"
-echo "  • If config issues: Review ~/.claude.json in container"
-echo "  • For more help: Run ./debug-shell.sh and investigate manually"
+echo "  • If config issues: inspect the per-agent config shown above"
+echo "  • For more help: Run ./debug-shell.sh $AGENT and investigate manually"

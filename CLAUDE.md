@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a security-hardened Docker container that runs Claude Code with pre-installed tools for general software development. The container is designed for isolated, secure execution of development tasks.
+This repository builds three security-hardened Docker images from one `Dockerfile` (multi-stage,
+`--target claude|codex|opencode`): one for **Claude Code**, one for **Codex**, one for **OpenCode**.
+All three share the same pinned toolchain and MCP server set; the agent CLI, the MCP config format,
+the RTK integration and the OpenSpec integration are adapted per agent. The images are designed for
+isolated, secure execution of development tasks.
 
 ## Architecture
 
@@ -12,14 +16,14 @@ This is a security-hardened Docker container that runs Claude Code with pre-inst
 
 The container is built on Node.js 24 (LTS) with the following layers:
 
-1. **Base System** - Debian Trixie (glibc 2.41) with hardened security settings
-2. **Toolchain (npm)** - All global npm CLIs installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). Includes Claude Code (2.1.248), OpenSpec (1.10.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.24.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.9.1)
-3. **OpenSpec** - initialized into the build HOME (`/home/claude`) at build time, with telemetry disabled via `OPENSPEC_TELEMETRY=0`. The project itself is NOT initialized at build — it is overlaid by the runtime mount
-4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified); `rtk init -g --auto-patch` installs a Claude Code PreToolUse hook that rewrites Bash commands through `rtk`
-5. **Caveman** - Output-compression skill for Claude Code, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.9.1`
+1. **Base stage** - Debian Trixie (glibc 2.41) with hardened security settings, git-delta, RTK, codebase-memory-mcp, and the shared npm toolchain. No agent CLI lives here.
+2. **Shared toolchain (npm)** - Installed via `npm ci` from `tools/package.json` + `tools/package-lock.json` (sha512-integrity, exact pinned versions, no `@latest`). Bins exposed via PATH (`/opt/toolchain/node_modules/.bin`). OpenSpec (1.10.0), CodeGraph (1.5.0), caveman-shrink (0.1.0), the MCP servers, and dev tools (pnpm 11.24.0, typescript 6.0.3, ts-node 10.9.2, prettier 3.9.6, eslint 10.9.1). The **agent CLIs are NOT in this shared set** — each `tools/agents/<agent>/` has its own package.json + lockfile, installed only into its image (`/opt/agent`): `@anthropic-ai/claude-code` 2.1.248, `@openai/codex` 0.155.0, `opencode-ai` 1.18.31
+3. **OpenSpec** - initialized into the build HOME (`/home/claude`) at build time, once per agent with that agent's tool id, telemetry disabled via `OPENSPEC_TELEMETRY=0`. claude: `~/.claude/{commands/opsx,skills}`; codex: `~/.agents/skills`; opencode: `.opencode/{skills,commands}` relocated to `~/.config/opencode/{skills,commands}` (the location OpenCode actually scans at user scope). The project itself is NOT initialized at build — it is overlaid by the runtime mount
+4. **RTK** - Rust Token Killer; static musl binary in `/usr/local/bin` (version via `RTK_VERSION` build arg, sha256-verified). Adapted per agent: claude `rtk init -g --auto-patch` (PreToolUse hook), codex `rtk init -g --codex` (`$CODEX_HOME/AGENTS.md` + `RTK.md`; in v0.45.0 this is instructions-based and mutually exclusive with `--auto-patch`), opencode `rtk init -g --opencode` (plugin `~/.config/opencode/plugins/rtk.ts`)
+5. **Caveman** - Output-compression skill for Claude Code **only**, installed at build time via its plugin mechanism (`claude plugin install`), pinned to tag `v1.9.1`. Not wired into codex/opencode
 6. **CodeGraph** - Code knowledge graph exposed as an MCP server (`@colbymchenry/codegraph`); ships a vendored prebuilt binary, runtime GitHub download disabled via `CODEGRAPH_NO_DOWNLOAD=1`
 7. **codebase-memory-mcp** - Tree-sitter code-intelligence graph exposed as an MCP server; a single static GitHub-release binary in `/usr/local/bin` (version via `CBM_VERSION` build arg, default `v0.10.8`, sha256-verified per arch). NOT installed from npm — see "codebase-memory-mcp" under Pre-installed Tools
-8. **MCP Servers** - Configured from MCP JSON configs; all stdio servers use pre-installed bins (no runtime `npx`)
+8. **MCP Servers** - One source of truth (`mcp-servers.json`) rendered per agent by `render-mcp-configs.sh`; all stdio servers use pre-installed bins (no runtime `npx`)
 
 ### Security Features
 
@@ -55,34 +59,36 @@ Claude Code configuration is pre-configured in the container:
 ### Build and Run
 
 ```bash
-# Build the container (with cache). npm CLI versions come from tools/package-lock.json
+# Build all three images (:claude, :codex, :opencode; :latest = claude)
 ./build.sh
 
-# Build without cache (clean build)
-./build-nocache.sh
+# Build one target / clean build
+./build.sh codex
+./build-nocache.sh opencode
 
-# Direct docker build command
-docker build -t claude-code-standalone .
+# Direct docker build command (per target)
+docker build --target codex -t claude-code-standalone:codex .
 
-# To change a pinned npm CLI version: edit tools/package.json, then regenerate the
-# lockfile inside node:24 (see "Environment Variables" → npm CLI versions), and rebuild.
+# To change a pinned npm CLI version: edit tools/package.json (shared) or
+# tools/agents/<agent>/package.json, regenerate that lockfile inside node:24, rebuild.
 
-# Run Claude Code interactively
-./run_claude.sh
+# Run an agent interactively (read-write over the current dir)
+./run_agent.sh claude
+./run_agent.sh codex
+./run_agent.sh opencode
 
-# Run with specific Claude Code arguments
-./run_claude.sh --model opus --verbose
+# Forward an argument straight to the agent (deterministic, no TUI flags)
+./run_agent.sh codex mcp list
+./run_agent.sh claude --model opus
 
-# Open debug shell in container
-./debug-shell.sh
-
-# Run MCP server diagnostics
-./run-diagnostics.sh
+# Open a debug shell / run MCP diagnostics for an image
+./debug-shell.sh codex
+./run-diagnostics.sh opencode
 ```
 
 ### Inside Container
 
-Once inside the container (via `debug-shell.sh` or `run_claude.sh`):
+Once inside the container (via `debug-shell.sh` or `run_agent.sh`):
 
 ```bash
 # Check Claude configuration
@@ -112,9 +118,14 @@ git diff --help  # Will show diff with delta formatting
 
 MCP (Model Context Protocol) servers are configured via JSON files and installed automatically during container build.
 
-All MCP servers currently live in `mcp-servers.json` and are installed verbatim by
-`install-mcp-servers.sh` into `~/.claude.json` under `.projects["/workspace/project"].mcpServers`.
-`mcp-servers-optional.json` is currently empty (`{}`).
+All MCP servers live in `mcp-servers.json` (one source of truth, six servers) and are rendered per
+agent by `render-mcp-configs.sh <agent>` at build time:
+- `claude` → `~/.claude.json` under `.projects["/workspace/project"].mcpServers` (Claude's native format)
+- `codex` → `~/.codex/config.toml` `[mcp_servers.<id>]` (`command`/`args`/`url`, `env_vars`, `env_http_headers`)
+- `opencode` → `~/.config/opencode/opencode.json` `mcp` (`{type:"local",command,environment}` / `{type:"remote",url,headers}`)
+
+`mcp-servers-optional.json` is currently empty (`{}`). A server there is included only when every
+`${VAR}` it references is set at build time.
 
 Servers defined in `mcp-servers.json`:
 - **CodeGraph** - Code knowledge graph; wrapped by `caveman-shrink` (`command: caveman-shrink`, `args: ["codegraph","serve","--mcp"]`) to compress tool descriptions. Requires a per-project `.codegraph/` index (see "CodeGraph indexing" below). No API key. Both `caveman-shrink` and `codegraph` are pre-installed (local upstream, so no npx round-trip and no `MCP_TIMEOUT` risk)
@@ -124,14 +135,13 @@ Servers defined in `mcp-servers.json`:
 - **Perplexity** - Web search and research; pre-installed bin `perplexity-mcp` (pkg `perplexity-mcp@0.2.3`, env `PERPLEXITY_API_KEY`)
 - **codebase-memory-mcp** - Tree-sitter code-intelligence graph; pre-installed static binary `codebase-memory-mcp` (GitHub release `v0.10.8`, sha256-pinned per arch), invoked with no args — the binary detects MCP stdio mode itself. No API key. Requires an explicit `index_repository` call per repo (see "codebase-memory-mcp indexing" below)
 
-**Important about API-key substitution:** `install-mcp-servers.sh` performs `${VAR}`
-substitution **only** for entries read from `mcp-servers-optional.json`. Servers in the
-base `mcp-servers.json` are copied as-is, so Context7/Perplexity are written into
-`~/.claude.json` with **literal** `${CONTEXT7_API_KEY}` / `${PERPLEXITY_API_KEY}`
-placeholders. **Verified by build+run:** Claude Code **does** expand these `${VAR}` references
-at connect time from the container env (passed via `--env-file .env`) — `claude mcp list`
-shows both `context7` and `perplexity` as ✓ Connected. So the literal placeholders are fine
-as long as the vars are present in the runtime env; build-time substitution is not required.
+**Important about API-key substitution:** secrets are **never baked**. A `${VAR}` value in the
+source is rendered as a runtime reference, per agent: Claude keeps the literal `${VAR}` (Claude Code
+expands it at connect time), Codex gets `env_vars = ["VAR"]` (stdio) or
+`env_http_headers = { HDR = "VAR" }` (HTTP), OpenCode gets `{env:VAR}`. **Verified by build+run:**
+with the keys present, `claude mcp list` / `codex mcp list` / `opencode mcp list` all resolve the
+same six servers; without a key the corresponding server shows a missing-env warning (Claude) or
+fails to connect (OpenCode), while the others stay connected. Build-time substitution is not needed.
 
 **No runtime installs — all MCP servers are pre-installed (supply-chain hardening):** every
 stdio MCP server invokes a **pre-installed, pinned binary** (`mcp-server-sequential-thinking`,
@@ -147,15 +157,16 @@ config at the installed bin — do **not** use `npx -y`. For an **HTTP** server 
 pre-install: add the `type: http` + `url` entry only.
 
 **Adding new MCP servers:**
-1. **Pre-install the server package** globally in the `Dockerfile` at a **pinned** version
-   (supply-chain policy: no runtime installs — see the note above). For an stdio server, do
-   `npm install -g <pkg>@<version>`; point the config at the installed bin, not `npx -y <pkg>`.
-2. Edit `mcp-servers.json` (copied as-is, no env substitution) or
-   `mcp-servers-optional.json` (only this file gets `${VAR}` substitution at build time, and
-   a server is skipped if any referenced variable is unset)
-3. Use standard MCP server JSON format (see files for examples)
-4. Add required environment variables to `.env` file (e.g., `NEW_SERVICE_API_KEY=xxx`)
-5. Rebuild container: `./build.sh`
+1. **Pre-install the server package** in the shared toolchain (`tools/package.json`) at a **pinned**
+   version (supply-chain policy: no runtime installs — see the note above). For an stdio server,
+   point the config at the installed bin, not `npx -y <pkg>`. For an **HTTP** server there is
+   nothing to pre-install.
+2. Add the server to `mcp-servers.json` in the shared JSON format (`command`/`args`/`env` for stdio,
+   `url`/`headers` for HTTP). `render-mcp-configs.sh` renders it for all three agents — no per-agent
+   config edit needed. `mcp-servers-optional.json` is included only when its `${VAR}`s are set at
+   build time.
+3. Add any required environment variables to `.env` (e.g. `NEW_SERVICE_API_KEY=xxx`).
+4. Rebuild: `./build.sh`.
 
 Variables from `.env` are automatically passed to the container at runtime - no script modifications needed.
 
@@ -171,18 +182,21 @@ cp .env.example .env
 nano .env  # or use any text editor
 
 # 3. Run container - all variables from .env will be automatically loaded
-./run_claude.sh
+./run_agent.sh claude
 ```
 
-The scripts (`run_claude.sh` and `debug-shell.sh`) dynamically read all variables from `.env` and pass them to Docker. You can add any new API keys or environment variables to `.env` without modifying the scripts.
+The scripts (`run_agent.sh`, `run_claude.sh` and `debug-shell.sh`) dynamically read all variables from `.env` and pass them to Docker. You can add any new API keys or environment variables to `.env` without modifying the scripts.
 
-**Checking installed MCP servers:**
+**Checking installed MCP servers** (the config location differs per agent):
 ```bash
-# Inside container
-cat ~/.claude.json | jq '.projects["/workspace/project"].mcpServers | keys'
-
-# View specific server configuration
-cat ~/.claude.json | jq '.projects["/workspace/project"].mcpServers["perplexity"]'
+# claude
+docker run --rm … <image>:claude --entrypoint bash -c 'cat ~/.claude.json | jq ".projects[\"/workspace/project\"].mcpServers | keys"'
+# codex
+docker run --rm … <image>:codex mcp list
+# opencode
+docker run --rm … <image>:opencode mcp list
+# or, for any agent, the in-image diagnostic:
+./run-diagnostics.sh codex
 ```
 
 ### CodeGraph indexing
@@ -236,8 +250,8 @@ Unlike CodeGraph, codebase-memory-mcp does **not** write into the indexed tree: 
   rebuilt per session (`index_repository` — for typical repos this is seconds). A baked
   `CBM_CACHE_DIR=/workspace/...` was rejected because writing an index directory into the user's repo
   is not this container's business. If you want persistence, pass it per-run:
-  `-e CBM_CACHE_DIR=/workspace/project/.cache/codebase-memory-mcp` in `run_claude.sh`.
-- **Consequence of that default:** the graph lands in the HOME tmpfs, which `run_claude.sh` sizes at
+  `-e CBM_CACHE_DIR=/workspace/project/.cache/codebase-memory-mcp` in `run_agent.sh`.
+- **Consequence of that default:** the graph lands in the HOME tmpfs, which `run_agent.sh` sizes at
   **512 MB** and which also holds all Claude Code agent state. 2.3 MB for this repo, but the graph
   grows with the tree — on a large monorepo the same `-e CBM_CACHE_DIR=…` override (pointing at the
   rw project mount) is the way to keep the index out of that tmpfs budget.
@@ -255,13 +269,17 @@ Unlike CodeGraph, codebase-memory-mcp does **not** write into the indexed tree: 
 
 ## Environment Variables
 
-**npm CLI versions are NOT build args.** claude-code, openspec, codegraph, caveman-shrink,
-the stdio MCP servers, and dev tools are all pinned in `tools/package.json` and locked (with
-sha512 integrity) in `tools/package-lock.json`, installed via `npm ci`. To change a version:
-edit `tools/package.json`, then regenerate the lockfile **inside node:24** (host npm may write a
-different `lockfileVersion`):
+**npm CLI versions are NOT build args.** The shared toolchain (openspec, codegraph, caveman-shrink,
+the stdio MCP servers, dev tools) is pinned in `tools/package.json`, and each agent CLI in
+`tools/agents/<agent>/package.json`; each is locked (with sha512 integrity) in a sibling
+`package-lock.json`, installed via `npm ci`. The split is what keeps each image to only its own agent
+binary (see "Container Structure"). To change a version, edit the matching package.json, then
+regenerate **that** lockfile **inside node:24** (host npm may write a different `lockfileVersion`):
 ```bash
+# shared
 docker run --rm -v "$PWD/tools:/w" -w /w node:24-trixie-slim npm install --package-lock-only
+# per agent
+docker run --rm -v "$PWD/tools/agents/codex:/w" -w /w node:24-trixie-slim npm install --package-lock-only
 ```
 After regenerating, run `npm audit` in the same `node:24` image — and, when a clean non-breaking
 fix is offered, `npm audit fix --package-lock-only` — so transitive security advisories surface and
@@ -270,17 +288,24 @@ so an already-applied patch is not downgraded by a later regen. Pin only Node-24
 gate runs each dev tool's `--version` to catch an incompatible engine (this is how the earlier
 pnpm 11 vs Node 20 mismatch was caught before the base was bumped to Node 22).
 
-**`allowScripts` in `tools/package.json` is load-bearing, not decoration.** The node:24 base ships
-npm 11.19, which gates package install scripts: an unapproved one still runs, but `npm ci` prints
+**`allowScripts` is load-bearing, not decoration.** The node:24 base ships npm 11.19, which gates
+package install scripts: an unapproved one still runs, but `npm ci` prints
 `npm warn install-scripts … not yet covered by allowScripts`, and the npm 12 line is where that
-becomes a refusal. `@anthropic-ai/claude-code` needs its `postinstall` (`node install.cjs`): the
-npm tarball is only 179 kB and ships a ~1 kB `bin/claude.exe` **placeholder** — the postinstall is
-what hard-links the real 248 MB binary from the platform package over it. A silently skipped script
-would therefore produce a green build with a stub `claude`. The approval is **version-pinned**
-(`"@anthropic-ai/claude-code@2.1.248": true`), so a claude-code bump brings the warning back until
-the entry is updated too — that is the intended reminder, not a bug. **Measured on node:24**: only
-`{"<pkg>@<version>": true}` or `{"<pkg>": true}` silence it; a semver **string** value
-(`"2.1.248"`, `"*"`, `">=2"`) is ignored and the warning stays.
+becomes a refusal. It now lives in the **per-agent** package.json, because only agent packages carry
+install scripts:
+- `tools/agents/claude/package.json` — `@anthropic-ai/claude-code` needs its `postinstall`
+  (`node install.cjs`): the npm tarball is only 179 kB and ships a ~1 kB `bin/claude.exe`
+  **placeholder** — the postinstall hard-links the real 248 MB binary from the platform package over
+  it. A silently skipped script would produce a green build with a stub `claude`.
+- `tools/agents/opencode/package.json` — `opencode-ai` needs its `postinstall`
+  (`node ./postinstall.mjs`) to link the platform binary from its optionalDependency into
+  `bin/opencode.exe`. (That script has a runtime `npm install` fallback; it never triggers here
+  because `npm ci` installs the optionalDependency from the lockfile.)
+- `tools/agents/codex/package.json` — no entry needed; `@openai/codex` declares no install scripts.
+
+The approval is **version-pinned** (`"<pkg>@<version>": true`), so a bump brings the warning back
+until the entry is updated too — the intended reminder, not a bug. **Measured on node:24**: only
+`{"<pkg>@<version>": true}` or `{"<pkg>": true}` silence it; a semver **string** value is ignored.
 
 **`typescript` is deliberately held at 6.0.3, NOT the `latest` dist-tag.** `latest` is 7.x, the
 native (Go) compiler rewrite, whose npm package no longer exposes the full JS compiler API. Under
@@ -302,7 +327,14 @@ prints a constant without loading the compiler; the build gate therefore also ru
   refreshing both hashes fails the `sha256sum -c` check by design.
 
 **Runtime variables** (set when running container):
-- `CLAUDE_CODE_OAUTH_TOKEN` - OAuth token for Claude Code authentication (required)
+- Agent authentication (any value present in `.env` is passed into the container, so one `.env`
+  serves all three agents):
+  - `CLAUDE_CODE_OAUTH_TOKEN` - OAuth token for the claude image (or `claude auth login`)
+  - `CODEX_API_KEY` - API key for non-interactive Codex (or `codex login`)
+  - `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / … - provider keys for OpenCode (or `opencode auth login`)
+- `AGENT_LOGIN_MOUNT` - set to `0` to disable the persistent per-agent login directory
+  (`~/.config/agent-standalone/login/<agent>`, or `AGENT_LOGIN_DIR`)
+- `AGENT_IMAGE_BASE` / `AGENT_IMAGE` - override the image base / the exact image reference
 - `CLAUDE_BYPASS_PERMISSIONS` - set to `1` to add `--dangerously-skip-permissions` to the entrypoint
   (off by default; default is auto mode). Full bypass, no in-app safety checks — for isolated/throwaway
   containers only.
@@ -316,7 +348,7 @@ prints a constant without loading the compiler; the build gate therefore also ru
   `disableRemoteControl` to turn it off), which is why this is a CLI flag and not a config key.
 - `CLAUDE_REMOTE_CONTROL_PREFIX` - prefix for auto-generated Remote Control session names
   (`<prefix>-<random-words>`). The CLI default is the hostname, which in a container is a throwaway
-  hex id; `run_claude.sh` and the `claude-box` launcher pass the host project directory name, and the
+  hex id; `run_agent.sh` and the `claude-box`/`agent-box` launchers pass the host project directory name, and the
   entrypoint falls back to `claude-box`. Sanitised to `[[:alnum:]._-]`, truncated to 40 chars.
 - `MCP_TIMEOUT` - MCP server connection timeout in milliseconds (default: `10000` = 10 seconds)
 - All variables from `.env` file are automatically passed to the container
@@ -335,6 +367,8 @@ prints a constant without loading the compiler; the build gate therefore also ru
   ran, i.e. `0` behaves as if the variable were unset. Use `1` for the tightest real limit.
 - `OPENSPEC_TELEMETRY=0` (disables OpenSpec telemetry at build and runtime)
 - `CODEGRAPH_NO_DOWNLOAD=1` (forbids CodeGraph's runtime binary download from GitHub Releases; binary must come from the npm registry)
+- `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_LSP_DOWNLOAD=1` (opencode image only — forbid
+  OpenCode's self-update and its runtime LSP-download, keeping the image pinned and local)
 - `CBM_ALLOWED_ROOT=/workspace` — confines codebase-memory-mcp's indexing to the project mount; an
   `index_repository` whose `repo_path` resolves outside it is refused. Correct because every
   entrypoint mounts the project at `/workspace/project` (see "codebase-memory-mcp indexing")
@@ -382,16 +416,18 @@ prints a constant without loading the compiler; the build gate therefore also ru
 
 ## Development Workflow (single read-write mode)
 
-1. **Run from your project**: `cd /path/to/repo && ./run_claude.sh`. The current directory is mounted
-   **read-write** at `/workspace/project`; the container runs as your host user (`--user $(id -u):$(id -g)`).
-2. **Entrypoint**: `claude` (auto mode via settings.json); the entrypoint first copies the baked
-   agent state from `/home/claude` into the writable tmpfs HOME. `CLAUDE_BYPASS_PERMISSIONS=1` is
-   opt-in and adds `--dangerously-skip-permissions` (full bypass for isolated containers).
-   `--remote-control` is added by **default** (opt out with `CLAUDE_REMOTE_CONTROL=0`), together with
-   `--remote-control-session-name-prefix` from `CLAUDE_REMOTE_CONTROL_PREFIX`; it needs a full-scope
-   `claude auth login` token — the inference-only `CLAUDE_CODE_OAUTH_TOKEN` cannot drive it, and the
-   entrypoint says so at startup.
-3. **Autonomous agent**: Claude edits/commits the project directly in `/workspace/project`. For `git push`,
+1. **Run from your project**: `cd /path/to/repo && ./run_agent.sh <claude|codex|opencode>` (or the
+   `claude-box`/`codex-box`/`opencode-box` launchers). The current directory is mounted **read-write**
+   at `/workspace/project`; the container runs as your host user (`--user $(id -u):$(id -g)`).
+2. **Entrypoint**: `start-agent.sh` execs the image's `$AGENT`. It first seeds the baked agent state
+   from `/home/claude` into the writable tmpfs HOME (or the mounted login directory) with `cp -an`, so
+   host credentials are never clobbered. **Any argument is forwarded verbatim** (`./run_agent.sh codex
+   mcp list` → `codex mcp list`); interactive-only flags are added only for a bare TUI launch. For
+   claude those are auto mode (settings.json) plus `CLAUDE_BYPASS_PERMISSIONS=1` (opt-in
+   `--dangerously-skip-permissions`) and `--remote-control` on by default (opt out with
+   `CLAUDE_REMOTE_CONTROL=0`); the latter needs a full-scope `claude auth login` token and the
+   entrypoint says so at startup when only the inference-only token is present.
+3. **Autonomous agent**: the agent edits/commits the project directly in `/workspace/project`. For `git push`,
    set `DEPLOY_KEY=/path/to/repo_deploy_key` (scoped, read-only mounted). Commit identity comes from
    your host `git config` (passed as env).
 4. **Trust**: the project is read-write and the agent is autonomous — use on trusted projects (see
@@ -399,7 +435,7 @@ prints a constant without loading the compiler; the build gate therefore also ru
 
 ## IDE integration (Dev Container)
 
-One extra entrypoint exists beside the autonomous `run_claude.sh`; it shares the same image.
+One extra entrypoint exists beside the autonomous `run_agent.sh`; it shares the same image.
 
 - **Dev Container — `.devcontainer/devcontainer.json`**. Opens the project *inside* the image as an
   interactive dev environment. Pulls the GHCR image; `overrideCommand: true` suppresses the
@@ -418,16 +454,24 @@ One extra entrypoint exists beside the autonomous `run_claude.sh`; it shares the
 - **ESLint** - JavaScript/TypeScript linting
 - **Prettier** - Code formatting
 - **OpenSpec** - `@fission-ai/openspec` CLI for spec-driven development (`openspec` binary)
-  - Installed globally via npm; requires Node.js >= 20.19.0 (satisfied by the `node:24-trixie-slim` base)
-  - Initialized at build time into the build HOME via `openspec init /home/claude --tools claude --force` (non-interactive). This bakes `~/.claude/commands/opsx` + skills, which the entrypoint copies into the runtime HOME — so the opsx slash-commands are available. (The project mount is NOT initialized at build because it is overlaid at runtime.)
+  - Installed in the shared toolchain via npm; requires Node.js >= 20.19.0 (satisfied by the `node:24-trixie-slim` base)
+  - Initialized at build time into the build HOME, once per agent stage with that agent's tool id (non-interactive, `--force`):
+    - claude: `openspec init /home/claude --tools claude` → `~/.claude/commands/opsx` + `~/.claude/skills` (this is why `/opsx:*` is available)
+    - codex: `--tools codex` → `~/.agents/skills` (Codex is skills-only; invoke `$openspec-*`)
+    - opencode: `--tools opencode` → `.opencode/{skills,commands}`, then **relocated** to `~/.config/opencode/{skills,commands}` because OpenCode only scans `.opencode` inside a project, while at user scope it reads `~/.config/opencode`
+  - The entrypoint seeds the baked HOME, so the integrations are available at runtime. (The **project** is NOT initialized at build because it is overlaid at runtime.)
   - Run `openspec init` inside the actual project (`/workspace/project`, read-write) on demand
   - Telemetry is opt-out only via the `OPENSPEC_TELEMETRY=0` env var (no `telemetry.enabled` config key exists); set as baked-in ENV, covering build and runtime
+  - **Note:** the repository's own `openspec/` directory is gitignored and currently contains only empty `changes/archive` and `specs/` — i.e. the CLI is installed, but this project is **not** itself initialized as an OpenSpec project (no `config.yaml`, no `ROADMAP.md`)
   - Source: https://github.com/Fission-AI/OpenSpec
 - **RTK** - Rust Token Killer; CLI proxy that filters/compresses command output to cut LLM token usage (`rtk` binary)
   - Static musl binary downloaded from GitHub releases into `/usr/local/bin`; pinned via `RTK_VERSION` build arg (default `v0.45.0`), no Rust toolchain needed
-  - `rtk init -g --auto-patch` runs at build time (as the `claude` user): installs a **Claude Code PreToolUse hook** that transparently rewrites Bash commands (`git status` → `rtk git status`), writes `~/RTK.md`, and patches `~/.bashrc`
-  - `-g` targets Claude Code (there is no `--agent claude`); `--auto-patch` makes init non-interactive
-  - Runtime needs only the `rtk` binary in PATH + the hook; no daemon. Optional config at `~/.config/rtk/config.toml`
+  - Adapted to **all three agents** at build time (as the `claude` user), each rewrites Bash commands to `rtk` equivalents:
+    - claude: `rtk init -g --auto-patch` → PreToolUse hook `rtk hook claude` in `~/.claude/settings.json` (+ `~/.claude/RTK.md`, `~/.bashrc`)
+    - codex: `rtk init -g --codex` → `$CODEX_HOME/AGENTS.md` references `$CODEX_HOME/RTK.md`. In v0.45.0 this is the instructions-based integration (Codex prefixes commands itself); the command is non-interactive and **cannot be combined with `--auto-patch`** (rtk validates that)
+    - opencode: `rtk init -g --opencode` → plugin `~/.config/opencode/plugins/rtk.ts` (`tool.execute.before`), global-only, no extra deps
+  - Runtime needs only the `rtk` binary in PATH + the per-agent integration; no daemon. Optional config at `~/.config/rtk/config.toml`
+  - **Verified by build+run:** claude `.hooks.PreToolUse` holds `rtk hook claude`; codex has `AGENTS.md` + `RTK.md`; opencode has `plugins/rtk.ts`. All three run `rtk 0.45.0`
   - Source: https://github.com/rtk-ai/rtk
 - **Caveman** - Output-compression skill for Claude Code (terse "caveman-speak"), reduces output tokens (~65%)
   - Installed at build time via `npx -y github:JuliusBrussee/caveman#v1.9.1 --non-interactive --only claude --no-mcp-shrink` (as the `claude` user; requires Node.js >= 18)
@@ -513,31 +557,32 @@ Inside the debug shell, you can run diagnostics manually:
 - Output directory is created automatically as `./reports/`
 
 **MCP server not loading:**
-- Check MCP configuration: `cat ~/.claude.json | jq '.projects["/workspace/project"].mcpServers'`
+- Check MCP configuration per agent: claude `cat ~/.claude.json | jq '.projects["/workspace/project"].mcpServers'`, codex `cat ~/.codex/config.toml`, opencode `jq .mcp ~/.config/opencode/opencode.json`
 - Verify the server's pre-installed bin is on PATH (e.g. `command -v mcp-server-sequential-thinking perplexity-mcp codegraph caveman-shrink codebase-memory-mcp`)
 - Check MCP timeout setting: `echo $MCP_TIMEOUT` (default: 10000ms = 10 seconds; all servers are pre-installed so no download races this)
-- Run diagnostics: `./run-diagnostics.sh` or inside container: `/app/diagnose-mcp.sh`
-- View MCP installation logs: Rebuild with `./build.sh` and check the `install-mcp-servers.sh` output
+- Run diagnostics: `./run-diagnostics.sh <agent>` or inside container: `/app/diagnose-mcp.sh`
+- View MCP rendering logs: rebuild with `./build.sh <agent>` and check the `render-mcp-configs.sh` output
 
 ## Files of Interest
 
-- `Dockerfile` - Complete container build configuration
-- `tools/package.json` - Pinned npm CLI toolchain (claude-code, openspec, codegraph, caveman-shrink, MCP servers, dev tools) — exact versions, single source of truth
-- `tools/package-lock.json` - Lockfile (sha512 integrity) for the toolchain; installed via `npm ci`. Regenerate inside node:24 after editing package.json
+- `Dockerfile` - Multi-stage build: `base` (shared toolchain) + `claude`/`codex`/`opencode` targets
+- `tools/package.json` + `tools/package-lock.json` - Shared npm toolchain (openspec, codegraph, caveman-shrink, MCP servers, dev tools) — exact versions, single source of truth. Installed via `npm ci`; regenerate inside node:24 after editing
+- `tools/agents/<agent>/package.json` + `package-lock.json` - Per-agent CLI (claude-code / codex / opencode-ai), installed only into its own image
+- `render-mcp-configs.sh` - Renders `mcp-servers.json` into the per-agent MCP config (claude JSON / codex TOML / opencode JSON)
+- `start-agent.sh` - Shared entrypoint: seeds the baked HOME (no-clobber), merges host Claude resources, execs `$AGENT`, forwards args verbatim
 - `claude-config.json` - Claude Code configuration with all permissions
 - `settings.local.json` - Local Claude settings (permissions allow/deny/ask)
 - `settings.json` - User Claude settings baked to `~/.claude/settings.json`: `permissions.defaultMode: "auto"`, `autoMode.classifyAllShell: true`, `advisorModel: "opus"`, `agentPushNotifEnabled: true`, `workflowSizeGuideline: "small"`, `autoUpdates: false`, `tui: "default"`, and the `statusLine` (wired to `/usr/local/bin/claude-statusline.sh`)
 - `statusline-command.sh` - Claude Code statusLine script (compact line: dir, git branch/dirty, model, duration, context %, 5h/7d rate limits); baked to `/usr/local/bin/claude-statusline.sh` (fixed, HOME-independent path). Deps (jq, git, awk, date, grep) are all present in the image
-- `mcp-servers.json` - Base MCP server configurations (always installed)
+- `mcp-servers.json` - Base MCP server configurations (always installed, shared by all agents)
 - `mcp-servers-optional.json` - Optional MCP servers (require API keys)
-- `install-mcp-servers.sh` - MCP installation script with variable substitution
 - `.env.example` - Example environment variables for MCP servers
 - `.env` - Your local environment variables (create from .env.example)
 - `.dockerignore` - Files excluded from Docker build context
-- `install.sh` - One-line installer (`curl … | bash`): pulls the GHCR image, stores the OAuth token in `~/.config/claude-standalone/claude.env` (chmod 600), and installs a `claude-box` launcher into `~/.local/bin` (the hardened `docker run` wrapped as an executable; supports `--uninstall` and a non-interactive path via `CLAUDE_CODE_OAUTH_TOKEN`). Also detects host `~/.claude/{agents,commands,skills}` and offers to pass them through — **mount** the live path (default), **copy** a snapshot to `~/.config/claude-standalone/resources/`, or **skip** (override non-interactively with `CLAUDE_RESOURCES_MODE`); the choice is written to `resources.conf`, `claude-box` mounts the paths read-only at `/host-claude/*`, and the entrypoint merges them OVER the baked state (host wins on collision; baked `opsx`/openspec skills survive)
-- `run_claude.sh` - Main entry point for running Claude Code (autonomous agent)
-- `.devcontainer/devcontainer.json` - Dev Container definition (interactive dev inside the image)
-- `debug-shell.sh` - Debug shell access
-- `run-diagnostics.sh` - Automated MCP server diagnostics (NEW)
-- `diagnose-mcp.sh` - Diagnostics script (runs inside container)
-- `build.sh` / `build-nocache.sh` - Container build scripts
+- `install.sh` - One-line installer (`curl … | bash`): pulls the three GHCR images, stores the Claude OAuth token in `~/.config/agent-standalone/agent.env` (chmod 600), and installs `claude-box`, `codex-box`, `opencode-box` plus the generic `agent-box` into `~/.local/bin` (the hardened `docker run` wrapped as executables; supports `--uninstall`, a non-interactive path via `CLAUDE_CODE_OAUTH_TOKEN`, and `AGENT_IMAGES` to select a subset). Each launcher mounts a per-agent persistent login dir (`~/.config/agent-standalone/login/<agent>`). It also detects host `~/.claude/{agents,commands,skills}` and offers to pass them through to the claude image — **mount** the live path (default), **copy** a snapshot to `~/.config/agent-standalone/resources/`, or **skip** (override non-interactively with `CLAUDE_RESOURCES_MODE`); the choice is written to `resources.conf`, the launcher mounts the paths read-only at `/host-claude/*`, and the entrypoint merges them OVER the baked state (host wins on collision; baked `opsx`/openspec skills survive)
+- `run_agent.sh` - Main entry point: `run_agent.sh <claude|codex|opencode> [agent args...]` (mounts the per-agent login dir, forwards args)
+- `run_claude.sh` - Back-compat alias for `run_agent.sh claude`
+- `.devcontainer/devcontainer.json` + `.devcontainer/{codex,opencode}/devcontainer.json` - Dev Container definitions per agent
+- `debug-shell.sh` - Debug shell access (`debug-shell.sh [agent]`)
+- `run-diagnostics.sh` / `diagnose-mcp.sh` - MCP diagnostics, agent-aware (`run-diagnostics.sh [agent]`)
+- `build.sh` / `build-nocache.sh` - Container build scripts (`build.sh [claude|codex|opencode ...]`)

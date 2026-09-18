@@ -1,13 +1,9 @@
 {
-  "name": "claude-container-toolchain",
+  "name": "agent-container-toolchain",
   "version": "1.0.0",
   "private": true,
-  "description": "Pinned, lockfile-controlled global CLI toolchain for the claude-standalone container. Installed via `npm ci` for bit-for-bit reproducible npm tarballs (integrity-verified). Do not add `^`/`~` ranges here — exact versions only; regenerate package-lock.json inside node:24 after any change.",
-  "allowScripts": {
-    "@anthropic-ai/claude-code@2.1.248": true
-  },
+  "description": "Pinned, lockfile-controlled global CLI toolchain shared by the claude/codex/opencode container images. Installed via `npm ci` for bit-for-bit reproducible npm tarballs (integrity-verified). Do not add `^`/`~` ranges here — exact versions only; regenerate package-lock.json inside node:24 after any change. The agent CLIs themselves live under tools/agents/<agent>/ so each image installs only its own.",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.248",
     "@fission-ai/openspec": "1.10.0",
     "@colbymchenry/codegraph": "1.5.0",
     "caveman-shrink": "0.1.0",

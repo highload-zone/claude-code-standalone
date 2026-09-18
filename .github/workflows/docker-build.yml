@@ -1,9 +1,16 @@
 name: Docker build & publish
 
-# Builds the image for amd64 + arm64 and publishes a single multi-arch manifest
-# to GitHub Container Registry (GHCR). Uses the built-in GITHUB_TOKEN (no extra
-# secrets). On pull_request it only BUILDS (verification, no push); on push to
-# main and on version tags it PUBLISHES to ghcr.io/<owner>/<repo>.
+# Builds three agent images (claude, codex, opencode) for amd64 + arm64 from one
+# Dockerfile (--target <agent>) and publishes one multi-arch manifest per agent
+# to GHCR. Uses the built-in GITHUB_TOKEN (no extra secrets). On pull_request it
+# only BUILDS (verification, no push); on push to main and on version tags it
+# PUBLISHES to ghcr.io/<owner>/<repo>.
+#
+# Tags per agent:
+#   <agent>                     (main)              e.g. :codex
+#   latest                      (main, claude only) alias of :claude
+#   <ver>, <major.minor>, <major> on a v* tag, suffixed with the agent (e.g. :1.2.3-codex)
+#   sha-<short>                 every build
 #
 # Supported archs are limited by the GitHub-release binaries → amd64 + arm64:
 # RTK (x86_64-musl, aarch64-gnu) and codebase-memory-mcp (linux amd64/arm64 only).
@@ -29,11 +36,13 @@ permissions:
 
 jobs:
   build:
-    name: build (${{ matrix.arch }})
+    name: build (${{ matrix.agent }} / ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        agent: [claude, codex, opencode]
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             platform: linux/amd64
@@ -70,10 +79,11 @@ jobs:
           retry_wait_seconds: 30
           command: |
             docker buildx build \
+              --target "${{ matrix.agent }}" \
               --platform "${{ matrix.platform }}" \
-              --cache-from "type=gha,scope=${{ matrix.arch }}" \
-              --cache-to "type=gha,mode=max,scope=${{ matrix.arch }}" \
-              --metadata-file "/tmp/meta-${{ matrix.arch }}.json" \
+              --cache-from "type=gha,scope=${{ matrix.agent }}-${{ matrix.arch }}" \
+              --cache-to "type=gha,mode=max,scope=${{ matrix.agent }}-${{ matrix.arch }}" \
+              --metadata-file "/tmp/meta-${{ matrix.agent }}-${{ matrix.arch }}.json" \
               ${{ github.event_name != 'pull_request' && format('--output type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, env.IMAGE_NAME) || '--output type=cacheonly' }} \
               .
 
@@ -81,29 +91,33 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p /tmp/digests
-          digest="$(jq -r '."containerimage.digest"' "/tmp/meta-${{ matrix.arch }}.json")"
+          digest="$(jq -r '."containerimage.digest"' "/tmp/meta-${{ matrix.agent }}-${{ matrix.arch }}.json")"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
-          name: digests-${{ matrix.arch }}
+          name: digests-${{ matrix.agent }}-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
   merge:
-    name: publish multi-arch manifest
+    name: publish manifest (${{ matrix.agent }})
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [claude, codex, opencode]
     steps:
       - name: Download digests
         uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-${{ matrix.agent }}-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
@@ -116,27 +130,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata (tags + labels)
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # Release versioning: a git tag v1.2.3 (a Release) publishes
-          #   :1.2.3, :1.2, :1  — the version is pinned by the release tag.
-          # main publishes :latest; every build also gets a :sha-<short> tag.
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short
+      # Build the tag list for this agent from the git ref. Kept explicit rather
+      # than via docker/metadata-action because every tag carries the agent suffix
+      # (and :latest is reserved for the claude image).
+      - name: Compute tags
+        id: tags
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}"
+          agent="${{ matrix.agent }}"
+          tags="${image}:sha-${GITHUB_SHA::7}-${agent}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"
+            major="${v%%.*}"; rest="${v#*.}"; minor="${rest%%.*}"
+            tags="${tags} ${image}:${v}-${agent} ${image}:${major}.${minor}-${agent} ${image}:${major}-${agent}"
+          fi
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            tags="${tags} ${image}:${agent}"
+            [ "${agent}" = "claude" ] && tags="${tags} ${image}:latest"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
       - name: Create & push manifest
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf -- '-t %s ' ${{ steps.tags.outputs.tags }}) \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect published manifest
-        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.agent }}"

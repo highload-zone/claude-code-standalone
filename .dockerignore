@@ -23,11 +23,12 @@ Thumbs.db
 
 # Node modules (if any)
 node_modules/
+tools/node_modules
+tools/agents/*/node_modules
 
 # Temporary files
 *.tmp
 temp/
-tools/node_modules
 
 # Agent / local tool directories (not used by the build)
 .claude/

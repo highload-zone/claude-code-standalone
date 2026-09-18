@@ -1,26 +1,44 @@
 #!/bin/bash
 
-# Claude Security Container - Build and Run Script
+# Build the agent container image(s). One Dockerfile, three targets.
+#
+#   ./build.sh                 # all three
+#   ./build.sh codex           # just codex
+#   ./build.sh claude codex    # a subset
+#
+# Tags: claude-code-standalone:<agent>; :latest is an alias for the claude image
+# (kept so existing `:latest` users and the claude-box installer keep working).
 
 set -e
 
-echo "🔨 Building Claude Code Container..."
-echo "📦 npm CLI versions are pinned in tools/package.json + tools/package-lock.json (npm ci)"
+IMAGE_BASE="${AGENT_IMAGE_BASE:-claude-code-standalone}"
+ALL=(claude codex opencode)
 
-# Build the container. npm tool versions come from the lockfile, not a build arg.
-docker build -t claude-code-standalone .
+targets=("$@")
+[ "${#targets[@]}" -eq 0 ] && targets=("${ALL[@]}")
 
-echo "✅ Container built successfully!"
+for a in "${targets[@]}"; do
+  case "$a" in claude|codex|opencode) ;;
+    *) echo "unknown target '$a' (expected claude|codex|opencode)" >&2; exit 2;;
+  esac
+done
 
-# Create output directory if it doesn't exist
+echo "Building: ${targets[*]}"
+echo "npm CLI versions are pinned in tools/package.json (+ tools/agents/<agent>) via npm ci"
 
-echo "📋 Usage examples:"
+for a in "${targets[@]}"; do
+  echo ""
+  echo "==> $IMAGE_BASE:$a"
+  docker build --target "$a" -t "$IMAGE_BASE:$a" .
+  if [ "$a" = "claude" ]; then
+    docker tag "$IMAGE_BASE:claude" "$IMAGE_BASE:latest"
+  fi
+done
+
 echo ""
-echo "1. Interactive shell:"
-echo "   ./run_claude.sh"
+echo "Built:"
+for a in "${targets[@]}"; do echo "  $IMAGE_BASE:$a"; done
 echo ""
-echo "2. Change a pinned npm CLI version:"
-echo "   edit tools/package.json, then regenerate the lockfile inside node:24:"
-echo "   docker run --rm -v \"\$PWD/tools:/w\" -w /w node:24-trixie-slim npm install --package-lock-only"
-echo ""
-echo "Container is ready! Use the scripts above to get started."
+echo "Run:"
+echo "  ./run_agent.sh claude          # or codex / opencode"
+echo "  docker run --rm <image> mcp list   # forwards to '<agent> mcp list'"
